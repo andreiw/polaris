@@ -1,0 +1,29 @@
+
+:comment
+
+Documents
+---------
+MPCFPE32B:
+  Programming Environments Manual for 32-Bit Implementations
+  of the PowerPC(TM) Architecture
+  Rev. 3
+  2005/09
+
+MPC7450UM:
+  MPC7450 RISC Microprocessor Reference Manual
+  Rev. 5
+  2005/01
+  
+Upper BAT register
+  MPCFPE32B  page 7-21 .. 7-22
+  MPC7450UM  page 5-24 .. 5-30
+
+/comment
+
+:bits 32
+:struct batu
+	bepi		15 # Block Effective Page Index
+	reserved	 4
+	bl		11 # Block Length
+	vs		 1 # Supervisor mode valid bit
+	vp		 1 # User mode valid bit

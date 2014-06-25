@@ -1,0 +1,700 @@
+/*
+ * CDDL HEADER START
+ *
+ * The contents of this file are subject to the terms of the
+ * Common Development and Distribution License (the "License").
+ * You may not use this file except in compliance with the License.
+ *
+ * You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+ * or http://www.opensolaris.org/os/licensing.
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ * When distributing Covered Code, include this CDDL HEADER in each
+ * file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+ * If applicable, add the following below this CDDL HEADER, with the
+ * fields enclosed by brackets "[]" replaced with your own identifying
+ * information: Portions Copyright [yyyy] [name of copyright owner]
+ *
+ * CDDL HEADER END
+ */
+/*
+ * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+ * Use is subject to license terms.
+ */
+
+#pragma ident	"@(#)nfsmapid_server.c	1.16	06/04/04 SMI"
+
+/*
+ * Door server routines for nfsmapid daemon
+ * Translate NFSv4 users and groups between numeric and string values
+ */
+#include <stdio.h>
+#include <stdlib.h>
+#include <alloca.h>
+#include <signal.h>
+#include <libintl.h>
+#include <limits.h>
+#include <errno.h>
+#include <sys/types.h>
+#include <string.h>
+#include <memory.h>
+#include <pwd.h>
+#include <grp.h>
+#include <door.h>
+#include <syslog.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <assert.h>
+#include <deflt.h>
+#include <nfs/nfs4.h>
+#include <nfs/nfssys.h>
+#include <nfs/nfsid_map.h>
+#include <nfs/mapid.h>
+#include <sys/sdt.h>
+
+/*
+ * We cannot use the backend nscd as it may make syscalls that may
+ * cause further nfsmapid upcalls introducing deadlock.
+ * Use the internal uncached versions of get*_r.
+ */
+extern struct group *_uncached_getgrgid_r(gid_t, struct group *, char *, int);
+extern struct group *_uncached_getgrnam_r(const char *, struct group *,
+    char *, int);
+extern struct passwd *_uncached_getpwuid_r(uid_t, struct passwd *, char *, int);
+extern struct passwd *_uncached_getpwnam_r(const char *, struct passwd *,
+    char *, int);
+
+#define		UID_MAX_STR_LEN		11	/* Digits in UID_MAX + 1 */
+#define		DIAG_FILE		"/var/run/nfs4_domain"
+
+/*
+ * idmap_kcall() takes a door descriptor as it's argument when we
+ * need to (re)establish the in-kernel door handles. When we only
+ * want to flush the id kernel caches, we don't redo the door setup.
+ */
+#define		FLUSH_KCACHES_ONLY	(int)-1
+
+FILE		*n4_fp;
+int		 n4_fd;
+
+extern size_t	pwd_buflen;
+extern size_t	grp_buflen;
+extern thread_t	sig_thread;
+
+/*
+ * Prototypes
+ */
+extern void	 check_domain(int);
+extern void	 idmap_kcall(int);
+extern int	 _nfssys(int, void *);
+extern int	 valid_domain(const char *);
+extern int	 validate_id_str(const char *);
+extern int	 extract_domain(char *, char **, char **);
+extern void	 update_diag_file(char *);
+extern void	*cb_update_domain(void *);
+extern int	 cur_domain_null(void);
+
+void
+nfsmapid_str_uid(struct mapid_arg *argp, size_t arg_size)
+{
+	struct mapid_res result;
+	struct passwd	 pwd;
+	char		*pwd_buf;
+	char		*user;
+	char		*domain;
+
+	if (argp->u_arg.len <= 0 || arg_size < MAPID_ARG_LEN(argp->u_arg.len)) {
+		result.status = NFSMAPID_INVALID;
+		result.u_res.uid = UID_NOBODY;
+		goto done;
+	}
+
+	if (!extract_domain(argp->str, &user, &domain)) {
+		long id;
+
+		/*
+		 * Invalid "user@dns_domain" string. Still, the user
+		 * part might be an encoded uid, so do a final check.
+		 * Remember, domain part of string was not set since
+		 * not a valid string.
+		 */
+		if (!validate_id_str(user)) {
+			result.status = NFSMAPID_UNMAPPABLE;
+			result.u_res.uid = UID_NOBODY;
+			goto done;
+		}
+
+		/*
+		 * Since atoi() does not return proper errors for
+		 * invalid translation, use strtol() instead.
+		 */
+		errno = 0;
+		id = strtol(user, (char **)NULL, 10);
+
+		if (errno || id < 0 || id > UID_MAX) {
+			result.status = NFSMAPID_UNMAPPABLE;
+			result.u_res.uid = UID_NOBODY;
+			goto done;
+		}
+
+		result.u_res.uid = (uid_t)id;
+		result.status = NFSMAPID_NUMSTR;
+		goto done;
+	}
+
+	/*
+	 * String properly constructed. Now we check for domain and
+	 * group validity. Note that we only look at the domain iff
+	 * the local domain is configured.
+	 */
+	if (!cur_domain_null() && !valid_domain(domain)) {
+		result.status = NFSMAPID_BADDOMAIN;
+		result.u_res.uid = UID_NOBODY;
+		goto done;
+	}
+
+	if ((pwd_buf = malloc(pwd_buflen)) == NULL ||
+	    _uncached_getpwnam_r(user, &pwd, pwd_buf, pwd_buflen) == NULL) {
+
+		if (pwd_buf == NULL)
+			result.status = NFSMAPID_INTERNAL;
+		else {
+			/*
+			 * Not a valid user
+			 */
+			result.status = NFSMAPID_NOTFOUND;
+			free(pwd_buf);
+		}
+		result.u_res.uid = UID_NOBODY;
+		goto done;
+	}
+
+	/*
+	 * Valid user entry
+	 */
+	result.u_res.uid = pwd.pw_uid;
+	result.status = NFSMAPID_OK;
+	free(pwd_buf);
+done:
+	(void) door_return((char *)&result, sizeof (struct mapid_res), NULL, 0);
+}
+
+/* ARGSUSED1 */
+void
+nfsmapid_uid_str(struct mapid_arg *argp, size_t arg_size)
+{
+	struct mapid_res	 result;
+	struct mapid_res	*resp;
+	struct passwd		 pwd;
+	int			 pwd_len;
+	char			*pwd_buf;
+	uid_t			 uid = argp->u_arg.uid;
+	size_t			 uid_str_len;
+	char			*pw_str;
+	size_t			 pw_str_len;
+	char			*at_str;
+	size_t			 at_str_len;
+	char			 dom_str[DNAMEMAX];
+	size_t			 dom_str_len;
+
+	if (uid < 0 || uid > UID_MAX) {
+		/*
+		 * Negative uid or greater than UID_MAX
+		 */
+		resp = &result;
+		resp->status = NFSMAPID_BADID;
+		resp->u_res.len = 0;
+		goto done;
+	}
+
+	/*
+	 * Make local copy of domain for further manipuation
+	 * NOTE: mapid_get_domain() returns a ptr to TSD.
+	 */
+	if (cur_domain_null()) {
+		dom_str_len = 0;
+		dom_str[0] = '\0';
+	} else {
+		dom_str_len = strlcpy(dom_str, mapid_get_domain(), DNAMEMAX);
+	}
+
+	/*
+	 * We want to encode the uid into a literal string... :
+	 *
+	 *	- upon failure to allocate space from the heap
+	 *	- if there is no current domain configured
+	 *	- if there is no such uid in the passwd DB's
+	 */
+	if ((pwd_buf = malloc(pwd_buflen)) == NULL || dom_str_len == 0 ||
+	    _uncached_getpwuid_r(uid, &pwd, pwd_buf, pwd_buflen) == NULL) {
+
+		/*
+		 * If we could not allocate from the heap, try
+		 * allocating from the stack as a last resort.
+		 */
+		if (pwd_buf == NULL && (pwd_buf =
+		    alloca(MAPID_RES_LEN(UID_MAX_STR_LEN))) == NULL) {
+			resp = &result;
+			resp->status = NFSMAPID_INTERNAL;
+			resp->u_res.len = 0;
+			goto done;
+		}
+
+		/*
+		 * Constructing literal string without '@' so that
+		 * we'll know that it's not a user, but rather a
+		 * uid encoded string. Can't overflow because we
+		 * already checked UID_MAX.
+		 */
+		pw_str = pwd_buf;
+		(void) sprintf(pw_str, "%d", (int)uid);
+		pw_str_len = strlen(pw_str);
+		at_str_len = dom_str_len = 0;
+		at_str = "";
+		dom_str[0] = '\0';
+	} else {
+		/*
+		 * Otherwise, we construct the "user@domain" string
+		 */
+		pw_str = pwd.pw_name;
+		pw_str_len = strlen(pw_str);
+		at_str = "@";
+		at_str_len = 1;
+	}
+
+	uid_str_len = pw_str_len + at_str_len + dom_str_len;
+	if ((resp = alloca(MAPID_RES_LEN(UID_MAX_STR_LEN))) == NULL) {
+		resp = &result;
+		resp->status = NFSMAPID_INTERNAL;
+		resp->u_res.len = 0;
+		goto done;
+	}
+	/* LINTED format argument to sprintf */
+	(void) sprintf(resp->str, "%s%s%s", pw_str, at_str, dom_str);
+	resp->u_res.len = uid_str_len;
+	free(pwd_buf);
+	resp->status = NFSMAPID_OK;
+
+done:
+	/*
+	 * There is a chance that the door_return will fail because the
+	 * resulting string is too large, try to indicate that if possible
+	 */
+	if (door_return((char *)resp,
+	    MAPID_RES_LEN(resp->u_res.len), NULL, 0) == -1) {
+		resp->status = NFSMAPID_INTERNAL;
+		resp->u_res.len = 0;
+		(void) door_return((char *)&result, sizeof (struct mapid_res),
+							NULL, 0);
+	}
+}
+
+void
+nfsmapid_str_gid(struct mapid_arg *argp, size_t arg_size)
+{
+	struct mapid_res	result;
+	struct group		grp;
+	char			*grp_buf;
+	char			*group;
+	char			*domain;
+
+	if (argp->u_arg.len <= 0 ||
+				arg_size < MAPID_ARG_LEN(argp->u_arg.len)) {
+		result.status = NFSMAPID_INVALID;
+		result.u_res.gid = GID_NOBODY;
+		goto done;
+	}
+
+	if (!extract_domain(argp->str, &group, &domain)) {
+		long id;
+
+		/*
+		 * Invalid "group@dns_domain" string. Still, the
+		 * group part might be an encoded gid, so do a
+		 * final check. Remember, domain part of string
+		 * was not set since not a valid string.
+		 */
+		if (!validate_id_str(group)) {
+			result.status = NFSMAPID_UNMAPPABLE;
+			result.u_res.gid = GID_NOBODY;
+			goto done;
+		}
+
+		/*
+		 * Since atoi() does not return proper errors for
+		 * invalid translation, use strtol() instead.
+		 */
+		errno = 0;
+		id = strtol(group, (char **)NULL, 10);
+
+		if (errno || id < 0 || id > UID_MAX) {
+			result.status = NFSMAPID_UNMAPPABLE;
+			result.u_res.gid = GID_NOBODY;
+			goto done;
+		}
+
+		result.u_res.gid = (gid_t)id;
+		result.status = NFSMAPID_NUMSTR;
+		goto done;
+	}
+
+	/*
+	 * String properly constructed. Now we check for domain and
+	 * group validity. Note that we only look at the domain iff
+	 * the local domain is configured.
+	 */
+	if (!cur_domain_null() && !valid_domain(domain)) {
+		result.status = NFSMAPID_BADDOMAIN;
+		result.u_res.gid = GID_NOBODY;
+		goto done;
+	}
+
+	if ((grp_buf = malloc(grp_buflen)) == NULL ||
+	    _uncached_getgrnam_r(group, &grp, grp_buf, grp_buflen) == NULL) {
+
+		if (grp_buf == NULL)
+			result.status = NFSMAPID_INTERNAL;
+		else {
+			/*
+			 * Not a valid group
+			 */
+			result.status = NFSMAPID_NOTFOUND;
+			free(grp_buf);
+		}
+		result.u_res.gid = GID_NOBODY;
+		goto done;
+	}
+
+	/*
+	 * Valid group entry
+	 */
+	result.status = NFSMAPID_OK;
+	result.u_res.gid = grp.gr_gid;
+	free(grp_buf);
+done:
+	(void) door_return((char *)&result, sizeof (struct mapid_res), NULL, 0);
+}
+
+/* ARGSUSED1 */
+void
+nfsmapid_gid_str(struct mapid_arg *argp, size_t arg_size)
+{
+	struct mapid_res	 result;
+	struct mapid_res	*resp;
+	struct group		 grp;
+	char			*grp_buf;
+	gid_t			 gid = argp->u_arg.gid;
+	size_t			 gid_str_len;
+	char			*gr_str;
+	size_t			 gr_str_len;
+	char			*at_str;
+	size_t			 at_str_len;
+	char			 dom_str[DNAMEMAX];
+	size_t			 dom_str_len;
+
+	if (gid < 0 || gid > UID_MAX) {
+		/*
+		 * Negative gid or greater than UID_MAX
+		 */
+		resp = &result;
+		resp->status = NFSMAPID_BADID;
+		resp->u_res.len = 0;
+		goto done;
+	}
+
+	/*
+	 * Make local copy of domain for further manipuation
+	 * NOTE: mapid_get_domain() returns a ptr to TSD.
+	 */
+	if (cur_domain_null()) {
+		dom_str_len = 0;
+		dom_str[0] = '\0';
+	} else {
+		dom_str_len = strlen(mapid_get_domain());
+		bcopy(mapid_get_domain(), dom_str, dom_str_len);
+		dom_str[dom_str_len] = '\0';
+	}
+
+	/*
+	 * We want to encode the gid into a literal string... :
+	 *
+	 *	- upon failure to allocate space from the heap
+	 *	- if there is no current domain configured
+	 *	- if there is no such gid in the group DB's
+	 */
+	if ((grp_buf = malloc(grp_buflen)) == NULL || dom_str_len == 0 ||
+	    _uncached_getgrgid_r(gid, &grp, grp_buf, grp_buflen) == NULL) {
+
+		/*
+		 * If we could not allocate from the heap, try
+		 * allocating from the stack as a last resort.
+		 */
+		if (grp_buf == NULL && (grp_buf =
+		    alloca(MAPID_RES_LEN(UID_MAX_STR_LEN))) == NULL) {
+			resp = &result;
+			resp->status = NFSMAPID_INTERNAL;
+			resp->u_res.len = 0;
+			goto done;
+		}
+
+		/*
+		 * Constructing literal string without '@' so that
+		 * we'll know that it's not a group, but rather a
+		 * gid encoded string. Can't overflow because we
+		 * already checked UID_MAX.
+		 */
+		gr_str = grp_buf;
+		(void) sprintf(gr_str, "%d", (int)gid);
+		gr_str_len = strlen(gr_str);
+		at_str_len = dom_str_len = 0;
+		at_str = "";
+		dom_str[0] = '\0';
+	} else {
+		/*
+		 * Otherwise, we construct the "group@domain" string
+		 */
+		gr_str = grp.gr_name;
+		gr_str_len = strlen(gr_str);
+		at_str = "@";
+		at_str_len = 1;
+	}
+
+	gid_str_len = gr_str_len + at_str_len + dom_str_len;
+	if ((resp = alloca(MAPID_RES_LEN(UID_MAX_STR_LEN))) == NULL) {
+		resp = &result;
+		resp->status = NFSMAPID_INTERNAL;
+		resp->u_res.len = 0;
+		goto done;
+	}
+	/* LINTED format argument to sprintf */
+	(void) sprintf(resp->str, "%s%s%s", gr_str, at_str, dom_str);
+	resp->u_res.len = gid_str_len;
+	free(grp_buf);
+	resp->status = NFSMAPID_OK;
+
+done:
+	/*
+	 * There is a chance that the door_return will fail because the
+	 * resulting string is too large, try to indicate that if possible
+	 */
+	if (door_return((char *)resp,
+	    MAPID_RES_LEN(resp->u_res.len), NULL, 0) == -1) {
+		resp->status = NFSMAPID_INTERNAL;
+		resp->u_res.len = 0;
+		(void) door_return((char *)&result, sizeof (struct mapid_res),
+							NULL, 0);
+	}
+}
+
+/* ARGSUSED */
+void
+nfsmapid_func(void *cookie, char *argp, size_t arg_size,
+						door_desc_t *dp, uint_t n_desc)
+{
+	struct mapid_arg	*mapargp;
+	struct mapid_res	mapres;
+
+	/*
+	 * Make sure we have a valid argument
+	 */
+	if (arg_size < sizeof (struct mapid_arg)) {
+		mapres.status = NFSMAPID_INVALID;
+		mapres.u_res.len = 0;
+		(void) door_return((char *)&mapres, sizeof (struct mapid_res),
+								NULL, 0);
+		return;
+	}
+
+	/* LINTED pointer cast */
+	mapargp = (struct mapid_arg *)argp;
+	switch (mapargp->cmd) {
+	case NFSMAPID_STR_UID:
+		nfsmapid_str_uid(mapargp, arg_size);
+		return;
+	case NFSMAPID_UID_STR:
+		nfsmapid_uid_str(mapargp, arg_size);
+		return;
+	case NFSMAPID_STR_GID:
+		nfsmapid_str_gid(mapargp, arg_size);
+		return;
+	case NFSMAPID_GID_STR:
+		nfsmapid_gid_str(mapargp, arg_size);
+		return;
+	default:
+		break;
+	}
+	mapres.status = NFSMAPID_INVALID;
+	mapres.u_res.len = 0;
+	(void) door_return((char *)&mapres, sizeof (struct mapid_res), NULL, 0);
+}
+
+/*
+ * mapid_get_domain() always returns a ptr to TSD, so the
+ * check for a NULL domain is not a simple comparison with
+ * NULL but we need to check the contents of the TSD data.
+ */
+int
+cur_domain_null(void)
+{
+	char	*p;
+
+	if ((p = mapid_get_domain()) == NULL)
+		return (1);
+
+	return (p[0] == '\0');
+}
+
+int
+extract_domain(char *cp, char **upp, char **dpp)
+{
+	/*
+	 * Caller must insure that the string is valid
+	 */
+	*upp = cp;
+
+	if ((*dpp = strchr(cp, '@')) == NULL)
+		return (0);
+	*(*dpp)++ = '\0';
+	return (1);
+}
+
+int
+valid_domain(const char *dom)
+{
+	const char	*whoami = "valid_domain";
+
+	if (!mapid_stdchk_domain(dom)) {
+		syslog(LOG_ERR, gettext("%s: Invalid inbound domain name %s."),
+			whoami, dom);
+		return (0);
+	}
+
+	/*
+	 * NOTE: mapid_get_domain() returns a ptr to TSD.
+	 */
+	return (strcasecmp(dom, mapid_get_domain()) == 0);
+}
+
+int
+validate_id_str(const char *id)
+{
+	while (*id) {
+		if (!isdigit(*id++))
+			return (0);
+	}
+	return (1);
+}
+
+void
+idmap_kcall(int door_id)
+{
+	struct nfsidmap_args args;
+
+	if (door_id >= 0) {
+		args.state = 1;
+		args.did = door_id;
+	} else {
+		args.state = 0;
+		args.did = 0;
+	}
+	(void) _nfssys(NFS_IDMAP, &args);
+}
+
+/*
+ * Get the current NFS domain.
+ *
+ * If NFSMAPID_DOMAIN is set in /etc/default/nfs, then it is the NFS domain;
+ * otherwise, the DNS domain is used.
+ */
+void
+check_domain(int sighup)
+{
+	const char	*whoami = "check_domain";
+	static int	 setup_done = 0;
+	static cb_t	 cb;
+
+	/*
+	 * Construct the arguments to be passed to libmapid interface
+	 * If called in response to a SIGHUP, reset any cached DNS TXT
+	 * RR state.
+	 */
+	cb.fcn = cb_update_domain;
+	cb.signal = sighup;
+	mapid_reeval_domain(&cb);
+
+	/*
+	 * Restart the signal handler thread if we're still setting up
+	 */
+	if (!setup_done) {
+		setup_done = 1;
+		if (thr_continue(sig_thread)) {
+			syslog(LOG_ERR, gettext("%s: Fatal error: signal "
+			    "handler thread could not be restarted."), whoami);
+			exit(6);
+		}
+	}
+}
+
+/*
+ * Need to be able to open the DIAG_FILE before nfsmapid(1m)
+ * releases it's root priviledges. The DIAG_FILE then remains
+ * open for the duration of this nfsmapid instance via n4_fd.
+ */
+void
+open_diag_file()
+{
+	static int	msg_done = 0;
+
+	if ((n4_fp = fopen(DIAG_FILE, "w+")) != NULL) {
+		n4_fd = fileno(n4_fp);
+		return;
+	}
+
+	if (msg_done)
+		return;
+
+	syslog(LOG_ERR, "Failed to create %s. Enable syslog "
+			"daemon.debug for more info", DIAG_FILE);
+	msg_done = 1;
+}
+
+/*
+ * When a new domain name is configured, save to DIAG_FILE
+ * and log to syslog, with LOG_DEBUG level (if configured).
+ */
+void
+update_diag_file(char *new)
+{
+	char	buf[DNAMEMAX];
+	ssize_t	n;
+	size_t	len;
+
+	(void) lseek(n4_fd, (off_t)0, SEEK_SET);
+	(void) ftruncate(n4_fd, 0);
+	(void) snprintf(buf, DNAMEMAX, "%s\n", new);
+
+	len = strlen(buf);
+	n = write(n4_fd, buf, len);
+	if (n < 0 || n < len)
+		syslog(LOG_DEBUG, "Could not write %s to diag file", new);
+	fsync(n4_fd);
+
+	syslog(LOG_DEBUG, "nfsmapid domain = %s", new);
+}
+
+/*
+ * Callback function for libmapid. This will be called
+ * by the lib, everytime the nfsmapid(1m) domain changes.
+ */
+void *
+cb_update_domain(void *arg)
+{
+	char	*new_dname = (char *)arg;
+
+	DTRACE_PROBE1(nfsmapid, daemon__domain, new_dname);
+	update_diag_file(new_dname);
+	idmap_kcall(FLUSH_KCACHES_ONLY);
+
+	return (NULL);
+}

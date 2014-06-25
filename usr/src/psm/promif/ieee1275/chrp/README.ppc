@@ -1,0 +1,48 @@
+/*
+ * CDDL HEADER START
+ *
+ * The contents of this file are subject to the terms of the
+ * Common Development and Distribution License (the "License").
+ * You may not use this file except in compliance with the License.
+ *
+ * You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+ * or http://www.opensolaris.org/os/licensing.
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ * When distributing Covered Code, include this CDDL HEADER in each
+ * file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+ * If applicable, add the following below this CDDL HEADER, with the
+ * fields enclosed by brackets "[]" replaced with your own identifying
+ * information: Portions Copyright [yyyy] [name of copyright owner]
+ *
+ * CDDL HEADER END
+ */
+
+/*
+ * Copyright 2006 Sun Microsystems Laboratories.  All rights reserved.
+ * Use is subject to license terms.
+ */
+
+
+
+This directory contains powerpc implementations of promif routines.
+The implementation of the functions are platform dependent and/or
+the functions use platform-dependent client interfaces that are not
+generic.
+
+a.  Implementation of prom_alloc() can be done in number of ways.
+
+	prom_alloc(and prom_malloc), prom_free - use claim release client 
+	services.
+	prom_alloc_ppc() - uses /memory node, and /chosen node's mmu property. 
+	till we have a 1275 machine we won't know if /chosen node's mmu
+	property exists or not.
+	prom_map() - who needs this capability...on sparc cpr needs this.
+
+b. We are not sure at this point if we need callbacks or not...
+
+	prom_set_callback() is first attempt at initializing callback
+	handlers for Firmware. Depending on Kernel's calling syntax we may 
+	want to change this.
+

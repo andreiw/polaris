@@ -1,0 +1,14 @@
+#!/sbin/sh
+#
+# Copyright 2004 Sun Microsystems, Inc.  All rights reserved.
+# Use is subject to license terms.
+
+# ident	"@(#)postremove	1.1	04/11/19 SMI"
+
+#
+BD=${BASEDIR:-/}
+if grep "\<ixgb\>" $BD/etc/name_to_major > /dev/null 2>&1
+then
+	rem_drv -b ${BD} ixgb
+fi
+exit 0

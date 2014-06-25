@@ -1,0 +1,159 @@
+#
+# CDDL HEADER START
+#
+# The contents of this file are subject to the terms of the
+# Common Development and Distribution License (the "License").
+# You may not use this file except in compliance with the License.
+#
+# You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+# or http://www.opensolaris.org/os/licensing.
+# See the License for the specific language governing permissions
+# and limitations under the License.
+#
+# When distributing Covered Code, include this CDDL HEADER in each
+# file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+# If applicable, add the following below this CDDL HEADER, with the
+# fields enclosed by brackets "[]" replaced with your own identifying
+# information: Portions Copyright [yyyy] [name of copyright owner]
+#
+# CDDL HEADER END
+#
+
+#
+# Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+# Use is subject to license terms.
+#
+# ident	"@(#)prototype_sparc	1.29	06/06/06 SMI"
+#
+
+!include prototype_com
+
+f none usr/lib/fm/dict/SUN4.dict 444 root bin
+f none usr/lib/fm/dict/SUN4U.dict 444 root bin
+f none usr/lib/fm/dict/SUN4V.dict 444 root bin
+f none usr/lib/fm/libmdesc.so.1 755 root bin
+s none usr/lib/fm/libmdesc.so=libmdesc.so.1 755 root bin
+f none usr/lib/fm/llib-lmdesc 644 root bin
+f none usr/lib/fm/llib-lmdesc.ln 644 root bin
+f none usr/lib/fm/libldom.so.1 755 root bin
+s none usr/lib/fm/libldom.so=libldom.so.1 755 root bin
+f none usr/lib/fm/llib-lldom 644 root bin
+f none usr/lib/fm/llib-lldom.ln 644 root bin
+d none usr/lib/fm/fmd/schemes/sparcv9 755 root bin
+f none usr/lib/fm/fmd/schemes/sparcv9/cpu.so 555 root bin
+f none usr/lib/fm/fmd/schemes/sparcv9/dev.so 555 root bin
+f none usr/lib/fm/fmd/schemes/sparcv9/fmd.so 555 root bin
+f none usr/lib/fm/fmd/schemes/sparcv9/hc.so 555 root bin
+f none usr/lib/fm/fmd/schemes/sparcv9/legacy-hc.so 555 root bin
+f none usr/lib/fm/fmd/schemes/sparcv9/mem.so 555 root bin
+f none usr/lib/fm/fmd/schemes/sparcv9/mod.so 555 root bin
+f none usr/lib/fm/fmd/schemes/sparcv9/pkg.so 555 root bin
+f none usr/lib/fm/fmd/schemes/sparcv9/zfs.so 555 root bin
+d none usr/lib/fm/sparcv9 755 root bin
+f none usr/lib/fm/sparcv9/libdiagcode.so.1 755 root bin
+s none usr/lib/fm/sparcv9/libdiagcode.so=libdiagcode.so.1
+f none usr/lib/fm/sparcv9/llib-ldiagcode.ln 644 root bin
+f none usr/lib/fm/sparcv9/libfmd_adm.so.1 755 root bin
+s none usr/lib/fm/sparcv9/libfmd_adm.so=libfmd_adm.so.1
+f none usr/lib/fm/sparcv9/llib-lfmd_adm.ln 644 root bin
+f none usr/lib/fm/sparcv9/libfmd_log.so.1 755 root bin
+s none usr/lib/fm/sparcv9/libfmd_log.so=libfmd_log.so.1
+f none usr/lib/fm/sparcv9/llib-lfmd_log.ln 644 root bin
+f none usr/lib/fm/sparcv9/libmdesc.so.1 755 root bin
+s none usr/lib/fm/sparcv9/libmdesc.so=libmdesc.so.1 755 root bin
+f none usr/lib/fm/sparcv9/llib-lmdesc.ln 644 root bin
+f none usr/lib/fm/sparcv9/libldom.so.1 755 root bin
+s none usr/lib/fm/sparcv9/libldom.so=libldom.so.1 755 root bin
+f none usr/lib/fm/sparcv9/llib-lldom.ln 644 root bin
+f none usr/lib/fm/sparcv9/libfmd_snmp.so.1 755 root bin
+s none usr/lib/fm/sparcv9/libfmd_snmp.so=libfmd_snmp.so.1
+f none usr/lib/fm/sparcv9/llib-lfmd_snmp.ln 644 root bin
+f none usr/lib/fm/sparcv9/libtopo.so.1 755 root bin
+s none usr/lib/fm/sparcv9/libtopo.so=libtopo.so.1
+f none usr/lib/fm/sparcv9/llib-ltopo.ln 644 root bin
+f none usr/lib/locale/C/LC_MESSAGES/SUN4.mo 444 root bin
+f none usr/lib/locale/C/LC_MESSAGES/SUN4U.mo 444 root bin
+f none usr/lib/locale/C/LC_MESSAGES/SUN4V.mo 444 root bin
+d none usr/platform 755 root sys
+d none usr/platform/sun4u 755 root sys
+d none usr/platform/sun4u/lib 755 root bin
+d none usr/platform/sun4u/lib/fm 755 root bin
+d none usr/platform/sun4u/lib/fm/eft 755 root bin
+f none usr/platform/sun4u/lib/fm/eft/fire.eft 444 root bin
+f none usr/platform/sun4u/lib/fm/eft/psycho.eft 444 root bin
+f none usr/platform/sun4u/lib/fm/eft/oberon.eft 444 root bin
+f none usr/platform/sun4u/lib/fm/eft/schizo.eft 444 root bin
+f none usr/platform/sun4u/lib/fm/eft/tomatillo.eft 444 root bin
+f none usr/platform/sun4u/lib/fm/eft/xmits.eft 444 root bin
+d none usr/platform/sun4u/lib/fm/fmd 755 root bin
+d none usr/platform/sun4u/lib/fm/fmd/plugins 755 root bin
+f none usr/platform/sun4u/lib/fm/fmd/plugins/cpumem-diagnosis.so 555 root bin
+f none usr/platform/sun4u/lib/fm/fmd/plugins/cpumem-diagnosis.conf 644 root bin
+f none usr/platform/sun4u/lib/fm/fmd/plugins/datapath-retire.so 555 root bin
+f none usr/platform/sun4u/lib/fm/fmd/plugins/datapath-retire.conf 644 root bin
+f none usr/platform/sun4u/lib/fm/fmd/plugins/USII-io-diagnosis.so 555 root bin
+f none usr/platform/sun4u/lib/fm/fmd/plugins/USII-io-diagnosis.conf 644 root bin
+d none usr/platform/sun4u/lib/fm/topo 755 root bin
+f none usr/platform/sun4u/lib/fm/topo/hc-topology.xml 444 root bin
+d none usr/platform/sun4u/lib/fm/topo/plugins 755 root bin
+f none usr/platform/sun4u/lib/fm/topo/plugins/chip.so 555 root bin
+f none usr/platform/sun4u/lib/fm/topo/plugins/hostbridge.so 555 root bin
+f none usr/platform/sun4u/lib/fm/topo/plugins/pcibus.so 555 root bin
+d none usr/platform/sun4v 755 root sys
+d none usr/platform/sun4v/include 755 root bin
+d none usr/platform/sun4v/include/sys 755 root bin
+d none usr/platform/sun4v/include/sys/fm 755 root bin
+f none usr/platform/sun4v/include/sys/fm/ldom.h 644 root bin
+d none usr/platform/sun4v/lib 755 root bin
+d none usr/platform/sun4v/lib/fm 755 root bin
+d none usr/platform/sun4v/lib/fm/eft 755 root bin
+f none usr/platform/sun4v/lib/fm/eft/fire.eft 444 root bin
+d none usr/platform/sun4v/lib/fm/fmd 755 root bin
+d none usr/platform/sun4v/lib/fm/fmd/plugins 755 root bin
+f none usr/platform/sun4v/lib/fm/fmd/plugins/cpumem-diagnosis.so 555 root bin
+f none usr/platform/sun4v/lib/fm/fmd/plugins/cpumem-diagnosis.conf 644 root bin
+f none usr/platform/sun4v/lib/fm/fmd/plugins/cpumem-retire.so 555 root bin
+f none usr/platform/sun4v/lib/fm/fmd/plugins/cpumem-retire.conf 644 root bin
+f none usr/platform/sun4v/lib/fm/fmd/plugins/etm.so 555 root bin
+f none usr/platform/sun4v/lib/fm/fmd/plugins/etm.conf 644 root bin
+d none usr/platform/sun4v/lib/fm/topo 755 root bin
+f none usr/platform/sun4v/lib/fm/topo/hc-topology.xml 444 root bin
+d none usr/platform/sun4v/lib/fm/topo/plugins 755 root bin
+f none usr/platform/sun4v/lib/fm/topo/plugins/chip.so 555 root bin
+f none usr/platform/sun4v/lib/fm/topo/plugins/hostbridge.so 555 root bin
+f none usr/platform/sun4v/lib/fm/topo/plugins/pcibus.so 555 root bin
+f none usr/platform/sun4v/lib/fm/topo/plugins/ioboard.so 555 root bin
+d none usr/platform/SUNW,SPARC-Enterprise 755 root sys
+d none usr/platform/SUNW,SPARC-Enterprise/lib 755 root bin
+d none usr/platform/SUNW,SPARC-Enterprise/lib/fm 755 root bin
+d none usr/platform/SUNW,SPARC-Enterprise/lib/fm/fmd 755 root bin
+d none usr/platform/SUNW,SPARC-Enterprise/lib/fm/fmd/plugins 755 root bin
+f none usr/platform/SUNW,SPARC-Enterprise/lib/fm/fmd/plugins/cpumem-retire.so 555 root bin
+f none usr/platform/SUNW,SPARC-Enterprise/lib/fm/fmd/plugins/cpumem-retire.conf 644 root bin
+f none usr/platform/SUNW,SPARC-Enterprise/lib/fm/fmd/plugins/event-transport.so 555 root bin
+f none usr/platform/SUNW,SPARC-Enterprise/lib/fm/fmd/plugins/event-transport.conf 644 root bin
+d none usr/platform/SUNW,SPARC-Enterprise/lib/fm/topo 755 root bin
+f none usr/platform/SUNW,SPARC-Enterprise/lib/fm/topo/hc-topology.xml 444 root bin
+d none usr/platform/SUNW,SPARC-Enterprise/lib/fm/topo/plugins 755 root bin
+f none usr/platform/SUNW,SPARC-Enterprise/lib/fm/topo/plugins/ioboard.so 555 root bin
+d none usr/platform/SUNW,Sun-Fire 755 root sys
+d none usr/platform/SUNW,Sun-Fire/lib 755 root bin
+d none usr/platform/SUNW,Sun-Fire/lib/fm 755 root bin
+d none usr/platform/SUNW,Sun-Fire/lib/fm/topo 755 root bin
+f none usr/platform/SUNW,Sun-Fire/lib/fm/topo/hc-topology.xml 444 root bin
+d none usr/platform/SUNW,Sun-Fire/lib/fm/topo/plugins 755 root bin
+f none usr/platform/SUNW,Sun-Fire/lib/fm/topo/plugins/ioboard.so 555 root bin
+d none usr/platform/SUNW,Sun-Fire-15000 755 root sys
+d none usr/platform/SUNW,Sun-Fire-15000/lib 755 root bin
+d none usr/platform/SUNW,Sun-Fire-15000/lib/fm 755 root bin
+d none usr/platform/SUNW,Sun-Fire-15000/lib/fm/eft 755 root bin
+f none usr/platform/SUNW,Sun-Fire-15000/lib/fm/eft/SUNW,Sun-Fire-15000.eft 444 root bin
+d none usr/platform/SUNW,Sun-Fire-15000/lib/fm/topo 755 root bin
+f none usr/platform/SUNW,Sun-Fire-15000/lib/fm/topo/hc-topology.xml 444 root bin
+d none usr/platform/SUNW,Sun-Fire-15000/lib/fm/topo/plugins 755 root bin
+f none usr/platform/SUNW,Sun-Fire-15000/lib/fm/topo/plugins/ioboard.so 555 root bin
+d none usr/platform/SUNW,Sun-Fire-T200 755 root sys
+d none usr/platform/SUNW,Sun-Fire-T200/lib 755 root bin
+d none usr/platform/SUNW,Sun-Fire-T200/lib/fm 755 root bin
+d none usr/platform/SUNW,Sun-Fire-T200/lib/fm/topo 755 root bin
+f none usr/platform/SUNW,Sun-Fire-T200/lib/fm/topo/hc-topology.xml 444 root bin

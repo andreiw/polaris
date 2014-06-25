@@ -1,0 +1,202 @@
+#! /usr/bin/perl -w
+#
+# CDDL HEADER START
+#
+# The contents of this file are subject to the terms of the
+# Common Development and Distribution License (the "License").
+# You may not use this file except in compliance with the License.
+#
+# You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+# or http://www.opensolaris.org/os/licensing.
+# See the License for the specific language governing permissions
+# and limitations under the License.
+#
+# When distributing Covered Code, include this CDDL HEADER in each
+# file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+# If applicable, add the following below this CDDL HEADER, with the
+# fields enclosed by brackets "[]" replaced with your own identifying
+# information: Portions Copyright [yyyy] [name of copyright owner]
+#
+# CDDL HEADER END
+#
+
+#
+# Copyright 2006 Sun Microsystems Laboratories.  All rights reserved.
+# Use is subject to license terms.
+#
+# ident	"@(#)prototype.pl	1.1	06/08/24 SMI"
+#
+
+# Show only the "interesting" lines from the
+# output of  svn status --verbose --show-updates.
+#
+# svn status shows too much information and not enough.
+# It says nothing about updates.
+# It shows all of the uninteresting files.
+# A "file of interest" is one that has something going
+# on in my workspace, or that is out of date with repect
+# to the trunk.
+#
+# Example of use:
+#   % cd $CODEMGR_WS
+#   % svn status --verbose --show-updates | svn-interesting
+#
+# Output of svn status --verbose --show-updates
+#
+#   col 1 is { blank A D M R C X I ? ! ~ }
+#       blank - No modifications.
+#       A     - Item is scheduled for Addition.
+#       D     - Item is scheduled for Deletion.
+#       M     - Item has been Modified.
+#       R     - Item has been Replaced in your working copy.
+#       C     - Conflict (applies to content, not properties).
+#       X     - Item is related to an eXternals definition.
+#       I     - Item is being Ignored.
+#       ?     - Item is not under version control.
+#       !     - Item is missing (moved or deleted not using svn).
+#       ~     - Item is versioned as different kind of object.
+#
+# Logic:
+#   col 8 is { blank *}
+#       blank - item in your working copy is up to date
+#       *     - newer revision exists on the server
+#
+# If column 1 is blank or ?, then it is not interesting.
+# if column 8 is not blank, then it is interesting, because
+# it is either out of date or there is something totally
+# unexpected going on.
+
+$debug = 0;
+$verbose = 0;
+$commit = 1;
+while (defined($ARGV[0]) && $ARGV[0] =~ /^-/) {
+  $_ = $ARGV[0];
+  if    ($_ eq '-d') {
+    $debug = 1;
+    }
+  elsif (m@-d(\d+)$@) {
+    $debug = $1;
+    }
+  elsif ($_ eq '-v') {
+    $verbose = 1;
+    }
+  elsif ($_ eq '-n') {
+    $commit = 0;
+    }
+  elsif ($_ eq '-') {
+    last;
+    }
+  elsif ($_ eq '--') {
+    shift;
+    last;
+    }
+  else {
+    die "Unknown option, '$_'\n ";
+    }
+  shift;
+  }
+shift  if (scalar(@ARGV)>0 && !defined($ARGV[0]));
+
+@src_ext_list = ( 'c', 'h', 's', 'h', 'y', 'l', 'fd', 'pl' );
+%src_ext_table = ();
+for $ext (@src_ext_list) {
+  $src_ext_table{$ext} = 1;
+  }
+
+$gen_fname = $ENV{'CODEMGR_WS'} . '/tmp/generated.fl';
+%gen_files = ();
+if (-f $gen_fname) {
+  open(G, $gen_fname) || die "open(${gen_fname}) failed; $!\n";
+  while (<G>) {
+    chop;
+    $gen_files{$_} = 1;
+    }
+  close(G) || die "close(${gen_fname}) failed; $!\n";
+  }
+$err = 0;
+while (<>) {
+  next if (m/^Status against revision:/);
+  $c1 = substr($_, 0, 1);
+  $update = substr($_, 7, 1);
+  if (! ($update eq ' ' || $update eq '*')) {
+    print STDERR "*** ERROR: unexpected value in colum 8.\n";
+    ++$err;
+    }
+  $interesting = 0;
+  if ($c1 eq ' ') {
+    # Not interesting
+    }
+  elsif ($c1 eq '?') {
+    $fname = $_;
+    chop($fname);
+    $fname =~ s/^.*\s+//;
+    $interesting = &filename_is_interesting($fname);
+    }
+  else {
+    $interesting = 1;
+    }
+  if ($update ne ' ') {
+    $interesting = 1;
+    }
+  if ($interesting) {
+    print $_;
+    }
+  if ($err > 10) {
+    die "Too many errors.\n";
+    }
+  }
+
+exit 0;
+
+sub get_simple_fname {
+  local($fname) = @_;
+  local(@p);
+
+  if ($fname =~ m@/@) {
+    @p = split(/\//, $fname);
+    return pop(@p);
+    }
+  return $fname;
+  }
+
+sub is_source_file {
+  local($simple_fname) = @_;
+  local($ext);
+
+  if ($simple_fname =~ /\.([^.]+)$/) {
+    $ext = $1;
+    if (defined($src_ext_table{$ext})) {
+      return 1;
+      }
+    if ($simple_fname =~ m/^Makefile\./) {
+      return 1;
+      }
+    }
+  else {
+    if ($simple_fname eq 'Makefile') {
+      return 1;
+      }
+    }
+  return 0;
+  }
+
+sub filename_is_interesting {
+  local($fname) = @_;
+  local($simple_fname);
+
+  $simple_fname = &get_simple_fname($fname);
+
+  # Ignore filenames that are not programming language files
+  return 0  if (!&is_source_file($simple_fname));
+
+  # Ignore SCCS droppings
+  return 0  if ($simple_fname =~ m/^,/);
+
+  # Ignore symbolic links
+  return 0  if (-l $fname);
+
+  # Ignore generated files
+  return 0  if (defined($gen_files{$fname}));
+
+  return 1;
+  }

@@ -1,0 +1,28 @@
+
+:comment
+
+Documents
+---------
+MPCFPE32B:
+  Programming Environments Manual for 32-Bit Implementations
+  of the PowerPC(TM) Architecture
+  Rev. 3
+  2005/09
+
+MPC7450UM:
+  MPC7450 RISC Microprocessor Reference Manual
+  Rev. 5
+  2005/01
+  
+PTE word 0
+  MPCFPE32B  page 7-30
+  MPC7450UM  page 5-36
+
+/comment
+
+:bits 32
+:struct pte0
+	v		 1 # Valid entry
+	vsid		24 # Virtual segment ID
+	h		 1 # Hash function identifier
+	api		 6 # Abbreviated page index

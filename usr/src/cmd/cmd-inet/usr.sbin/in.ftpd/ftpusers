@@ -1,0 +1,19 @@
+# ident	"@(#)ftpusers	1.5	04/02/20 SMI"
+#
+# List of users denied access to the FTP server, see ftpusers(4).
+#
+root
+daemon
+bin
+sys
+adm
+lp
+uucp
+nuucp
+smmsp
+listen
+gdm
+webservd
+nobody
+noaccess
+nobody4

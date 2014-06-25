@@ -1,0 +1,22 @@
+OUTPUT_ARCH(powerpc:common)
+/*  rela.dyn .rela.data  .rela.plt  .rela.bss  .rela.sbss */
+/* .text .sdata .dynamic .got .sbss .bss .plt .dynbss .dynsbss .rela.dyn .rela.data  .rela.plt  .rela.bss  .rela.sbss */
+
+SECTIONS
+{
+  /*  . = 0x008bb648; */
+
+  _text = .;
+  .text : { *(.text) }
+  .rodata : { *(.rodata) }
+  _etext = .;
+  _data = .;
+  .data : { *(.data) }
+  .sdata : { *(.sdata) }
+  .sbss : { *(.sbss) }
+  _edata = .;
+
+  __bss_start = .;
+  .bss : { *(.bss) }
+  _end = .;
+}

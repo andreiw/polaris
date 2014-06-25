@@ -1,0 +1,176 @@
+#
+# CDDL HEADER START
+#
+# The contents of this file are subject to the terms of the
+# Common Development and Distribution License (the "License").
+# You may not use this file except in compliance with the License.
+#
+# You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+# or http://www.opensolaris.org/os/licensing.
+# See the License for the specific language governing permissions
+# and limitations under the License.
+#
+# When distributing Covered Code, include this CDDL HEADER in each
+# file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+# If applicable, add the following below this CDDL HEADER, with the
+# fields enclosed by brackets "[]" replaced with your own identifying
+# information: Portions Copyright [yyyy] [name of copyright owner]
+#
+# CDDL HEADER END
+#
+
+# Portions Copyright 2006 Cyril Plisko
+#
+# Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+# Use is subject to license terms.
+#
+# Copyright 2006 Sun Microsystems Laboratories.  All rights reserved.
+# Use is subject to license terms.
+#
+# uts/ppc/Makefile.files
+#
+# ident	"%Z%%M%	%I%	%E% SMI"
+#
+#
+# This Makefile defines all file modules and build rules for the
+# directory uts/ppc and it's children. These are the source files which
+# are specific to PowerPC processor architectures.
+#
+
+#
+#	Core (unix) objects
+#
+CORE_OBJS +=		\
+	copy.o		\
+	copy_subr.o	\
+	cpc_subr.o	\
+	ddi_arch.o	\
+	ddi_i86.o	\
+	ddi_i86_asm.o	\
+	desctbls.o	\
+	desctbls_asm.o	\
+	exception.o	\
+	float.o		\
+	fpu.o		\
+	gcc_implicit.o	\
+	hat_ppcmmu.o	\
+	mach_ppcmmu.o	\
+	lwp_private.o	\
+	lock_prim.o	\
+	ovbcopy.o	\
+	polled_io.o	\
+	bootops.o	\
+	ppc_subr.o	\
+	sundep.o	\
+	swtch.o		\
+	temp_bandaid.o	\
+	###
+
+#
+# 64-bit multiply/divide compiler helper routines
+# used only for ia32
+#
+
+SPECIAL_OBJS_32 +=	\
+	muldiv.o
+
+#
+#	Generic-unix Module
+#
+GENUNIX_OBJS +=		\
+	archdep.o	\
+	###
+
+#	arch_kdi.o	\
+#	getcontext.o	\
+#	install_utrap.o	\
+#	prom_enter.o	\
+#	prom_exit.o	\
+#	prom_panic.o	\
+#	sendsig.o	\
+#	syscall.o
+
+
+#
+#	PROM Routines
+#
+#GENUNIX_OBJS +=		\
+#	prom_env.o	\
+#	prom_emul.o	\
+#	prom_getchar.o	\
+#	prom_init.o	\
+#	prom_node.o	\
+#	prom_printf.o	\
+#	prom_prop.o	\
+#	prom_putchar.o	\
+#	prom_reboot.o	\
+#	prom_version.o
+
+#
+#	file system modules
+#
+CORE_OBJS +=		\
+	prmachdep.o
+
+XMEMFS_OBJS +=		\
+	seg_xmem.o	\
+	xmem_dir.o	\
+	xmem_subr.o	\
+	xmem_vfsops.o	\
+	xmem_vnops.o
+
+#
+#	Driver modules
+#
+SD_OBJS += sd.o sd_xbuf.o
+
+CMLB_OBJS += cmlb.o
+
+VGATEXT_OBJS += vgatext.o vgasubr.o
+
+#
+#	misc. modules
+#
+KRTLD_BOOT_OBJS +=	\
+	kobj_boot.o
+
+KRTLD_OBJS +=		\
+	bootops.o	\
+	bootrd.o	\
+	doreloc.o	\
+	kobj_convrelstr.o \
+	kobj_crt.o	\
+	kobj_isa.o	\
+	kobj_reloc.o
+
+#
+#	misc. modules
+#
+FBT_OBJS += fbt.o
+SDT_OBJS += sdt.o
+
+#
+#	MPC74xx Performance Counter BackEnd module
+#
+MPC74XX_PCBE_OBJS = mpc74xx_pcbe.o
+
+#
+#	AAC module
+#
+AAC_OBJS = aac.o
+
+#
+#	AMR module
+#
+AMR_OBJS = amr.o
+
+#
+#	special files
+#
+MODSTUB_OBJ +=	 	\
+	modstubs.o
+
+BOOTDEV_OBJS +=		\
+	bootdev.o
+
+INC_PATH	+= -I$(UTSBASE)/ppc

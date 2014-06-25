@@ -1,0 +1,29 @@
+
+:comment
+
+Documents
+---------
+MPCFPE32B:
+  Programming Environments Manual for 32-Bit Implementations
+  of the PowerPC(TM) Architecture
+  Rev. 3
+  2005/09
+
+MPC7450UM:
+  MPC7450 RISC Microprocessor Reference Manual
+  Rev. 5
+  2005/01
+  
+Segment Register (SR) register bit settings
+  MPCFPE32B  page 7-29
+
+/comment
+
+:bits 32
+:struct sr
+	t		 1 # Translation format
+	ks		 1 # protection Key, Supervisor state
+	kp		 1 # protection Key, user state
+	n		 1 # No-execute protection bit
+	reserved	 4
+	vsid		24 # Virtual segment ID

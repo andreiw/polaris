@@ -1,0 +1,338 @@
+#! /usr/bin/perl -w
+#
+# CDDL HEADER START
+#
+# The contents of this file are subject to the terms of the
+# Common Development and Distribution License (the "License").
+# You may not use this file except in compliance with the License.
+#
+# You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+# or http://www.opensolaris.org/os/licensing.
+# See the License for the specific language governing permissions
+# and limitations under the License.
+#
+# When distributing Covered Code, include this CDDL HEADER in each
+# file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+# If applicable, add the following below this CDDL HEADER, with the
+# fields enclosed by brackets "[]" replaced with your own identifying
+# information: Portions Copyright [yyyy] [name of copyright owner]
+#
+# CDDL HEADER END
+#
+
+#
+# Copyright 2006 Sun Microsystems Laboratories.  All rights reserved.
+# Use is subject to license terms.
+#
+# ident	"@(#)prototype.pl	1.1	06/08/24 SMI"
+#
+
+# Build supplemental index files in a workspace.
+# The workspace must be one of three types:
+#   1) Codemanager workspace;
+#   2) svn workspace - under the control of subversion;
+#   3) archival copy
+#
+# for top-level $SRC and for uts, cmd, and lib:
+#   build file lists for each of:
+#     - *.c files
+#     - *.h files
+#     - *.s files
+#     - Makefile* files
+#
+# Codemanager workspace
+# ---------------------
+# The lists are built from subsets of the workspace's name table,
+# .../Codemgr_wsdata/nametable.
+# No tree walk is done, so no "new" files will be "found".
+#
+# Subversion workspace
+# --------------------
+# Subversion does not maintain a single nametable.
+# For now, use brute force to find all files.
+#
+# Archival copy
+# -------------
+# An archival copy of what used to be a Codemanager workspace
+# or an svn workspace.
+
+$debug = 0;
+$verbose = 0;
+$commit = 1;
+$cmd = 'index';
+while (defined($ARGV[0]) && $ARGV[0] =~ /^-/) {
+  $_ = $ARGV[0];
+  if    ($_ eq '-d') {
+    $debug = 1;
+    }
+  elsif (m@-d(\d+)$@) {
+    $debug = $1;
+    }
+  elsif ($_ eq '-v') {
+    $verbose = 1;
+    }
+  elsif ($_ eq '-n') {
+    $commit = 0;
+    }
+  elsif ($_ eq '-clean') {
+    $cmd = 'clean';
+    }
+  elsif ($_ eq '-list') {
+    $cmd = 'list';
+    }
+  elsif ($_ eq '-') {
+    last;
+    }
+  elsif ($_ eq '--') {
+    shift;
+    last;
+    }
+  else {
+    die "Unknown option, '$_'\n ";
+    }
+  shift;
+  }
+shift  if (scalar(@ARGV)>0 && !defined($ARGV[0]));
+
+if (scalar(@ARGV) > 0) {
+  $ws_dir = shift;
+  }
+else {
+  $ws_dir = $ENV{'CODEMGR_WS'};
+  }
+if (!defined($ws_dir)) {
+  print STDERR
+    "Must supply path to workspace.\n",
+    "either as the first command line argument\n",
+    "or through the environment variable, CODEMGR_WS.\n";
+  die " ";
+  }
+
+if ($cmd eq 'clean') {
+  chdir($ws_dir) || die "chdir('${ws_dir}') failed; $!\n";
+  for $subdir ('usr/src', 'usr/src/cmd', 'usr/src/lib', 'usr/src/uts') {
+    next if (! -d $subdir);
+    unlink($subdir . '/t.ndx.cfiles');
+    unlink($subdir . '/t.ndx.hfiles');
+    unlink($subdir . '/t.ndx.sfiles');
+    unlink($subdir . '/t.ndx.makefiles');
+    }
+  exit 0;
+  }
+
+if ($cmd eq 'list') {
+  chdir($ws_dir) || die "chdir('${ws_dir}') failed; $!\n";
+  for $subdir ('usr/src', 'usr/src/cmd', 'usr/src/lib', 'usr/src/uts') {
+    next if (! -d $subdir);
+    system('ls', '-l',
+        $subdir . '/t.ndx.cfiles',
+        $subdir . '/t.ndx.hfiles',
+        $subdir . '/t.ndx.sfiles',
+        $subdir . '/t.ndx.makefiles');
+    }
+  exit 0;
+  }
+
+%cfile_table = ();
+%hfile_table = ();
+%sfile_table = ();
+%mfile_table = ();
+
+if (-d $ws_dir . '/Codemgr_wsdata') {
+  &index_codemgr_workspace;
+  }
+elsif (-d $ws_dir . '/.svn') {
+  &index_svn_workspace;
+  }
+elsif (-d $ws_dir . '/Archive') {
+  &index_archival_workspace;
+  }
+else {
+  print STDERR
+    "ERROR: Workspace is of unknown type.\n",
+    "       Must be teamware or subversion.\n";
+  exit 1;
+  }
+
+@cfile_list = sort keys %cfile_table;
+@hfile_list = sort keys %hfile_table;
+@sfile_list = sort keys %sfile_table;
+@mfile_list = sort keys %mfile_table;
+
+# Create index files
+
+$src_dir = $ws_dir . '/usr/src';
+
+if (-d $src_dir) {
+  &write_index(*cfile_list, $src_dir . '/t.ndx.cfiles', 'usr/src/');
+  &write_index(*hfile_list, $src_dir . '/t.ndx.hfiles', 'usr/src/');
+  &write_index(*sfile_list, $src_dir . '/t.ndx.sfiles', 'usr/src/');
+  &write_index(*mfile_list, $src_dir . '/t.ndx.makefiles', 'usr/src/');
+  }
+
+$cmd_dir = $src_dir . '/cmd';
+if (-d $cmd_dir) {
+  &write_index(*cfile_list, $cmd_dir . '/t.ndx.cfiles', 'usr/src/cmd/');
+  &write_index(*hfile_list, $cmd_dir . '/t.ndx.hfiles', 'usr/src/cmd/');
+  &write_index(*sfile_list, $cmd_dir . '/t.ndx.sfiles', 'usr/src/cmd/');
+  &write_index(*mfile_list, $cmd_dir . '/t.ndx.makefiles', 'usr/src/cmd/');
+  }
+
+$lib_dir = $src_dir . '/lib';
+if (-d $lib_dir) {
+  &write_index(*cfile_list, $lib_dir . '/t.ndx.cfiles', 'usr/src/lib/');
+  &write_index(*hfile_list, $lib_dir . '/t.ndx.hfiles', 'usr/src/lib/');
+  &write_index(*sfile_list, $lib_dir . '/t.ndx.sfiles', 'usr/src/lib/');
+  &write_index(*mfile_list, $lib_dir . '/t.ndx.makefiles', 'usr/src/lib/');
+  }
+
+$uts_dir = $src_dir . '/uts';
+if (-d $uts_dir) {
+  &write_index(*cfile_list, $uts_dir . '/t.ndx.cfiles', 'usr/src/uts/');
+  &write_index(*hfile_list, $uts_dir . '/t.ndx.hfiles', 'usr/src/uts/');
+  &write_index(*sfile_list, $uts_dir . '/t.ndx.sfiles', 'usr/src/uts/');
+  &write_index(*mfile_list, $uts_dir . '/t.ndx.makefiles', 'usr/src/uts/');
+  }
+
+exit 0;
+
+sub index_codemgr_workspace {
+  &require_workspace($ws_dir);
+  &require_file($ws_dir . '/Codemgr_wsdata/nametable');
+  &require_dir($ws_dir . '/usr/src');
+
+  $ntbl_fname = "${ws_dir}/Codemgr_wsdata/nametable";
+  if (!open(NTBL, $ntbl_fname)) {
+    die "open('${ntbl_fname}') failed; $!\n ";
+    }
+
+  while (<NTBL>) {
+    chop;
+    s/\s.*//;
+    next unless (m@^usr/src/@);
+    @p = split(/\//, $_);
+    $sname = $p[$#p];
+    if ($sname =~ m@\.c$@) {
+      $cfile_table{$_} = 1;
+      if ($verbose) {
+        print $sname, ' -- ', $_, "\n";
+        }
+      }
+    elsif ($sname =~ m@\.h$@) {
+      $hfile_table{$_} = 1;
+      }
+    elsif ($sname =~ m@\.s$@) {
+      $sfile_table{$_} = 1;
+      }
+    elsif ($sname =~ m@^Makefile@) {
+      $mfile_table{$_} = 1;
+      }
+    }
+  close(NTBL);
+  }
+
+sub wanted {
+  if ($verbose) {
+    print STDERR "wanted: \$_ = $_ , \$name = ${name}\n";
+    }
+  if ($_ eq '.svn') {
+    $prune = 1;
+    return;
+    }
+  # Even though svn has nothing to do with either
+  # sccs or rcs, there can be residue from either
+  # of these source code control programs, because
+  # individual files can have fine-grain tracking
+  # of revisions applied to them, in-between
+  # svn commit operations.
+  if ($_ eq 'SCCS' || $_ eq 'RCS' || $_ eq 'tmp') {
+    $prune = 1;
+    return;
+    }
+  if ($_ eq 'debug32' || $_ eq 'obj32' || $_ eq 'debug64' || $_ eq 'obj64') {
+    $prune = 1;
+    return;
+    }
+  if (m@^t\.@ || m@^,@) {
+    return;
+    }
+  if (m@\.c$@) {
+    $cfile_table{$name} = 1;
+    # print $_, ' -- ', $name, "\n";
+    }
+  elsif (m@\.h$@) {
+    $hfile_table{$name} = 1;
+    }
+  elsif (m@\.s$@) {
+    $sfile_table{$name} = 1;
+    }
+  elsif (m@^Makefile@) {
+    $mfile_table{$name} = 1;
+    }
+  }
+
+sub index_svn_workspace {
+  require 'find.pl';
+  chdir($ws_dir) || die "chdir('${ws_dir}') failed; $!\n";
+  &find('usr/src');
+  }
+
+sub index_archival_workspace {
+  require 'find.pl';
+  chdir($ws_dir) || die "chdir('${ws_dir}') failed; $!\n";
+  &find('usr/src');
+  }
+
+sub write_index {
+  local(*file_list, $index_fname, $prefix) = @_;
+  local($index_open);
+  local($p);
+
+  $index_open = '> ' . $index_fname;
+  open(NDX, $index_open) || die "open('${index_open}') failed; $!\n ";
+  for $p (@file_list) {
+    if (substr($p, 0, length($prefix)) eq $prefix) {
+      print NDX  substr($p, length($prefix), 999999), "\n";
+      }
+    }
+  close(NDX);
+  }
+
+
+sub require_workspace {
+  local($path) = @_;
+
+  &require_dir($path);
+  &require_dir($path . '/Codemgr_wsdata');
+  }
+
+sub require_dir {
+  local($path) = @_;
+
+  if (! -e $path) {
+    print STDERR  "${path} does not exist.\n";
+    die ' ';
+    }
+
+  if (! -d $path) {
+    print STDERR  "${path} is not a directry.\n";
+    system('ls', '-dl', $path);
+    die ' ';
+    }
+  }
+
+sub require_file {
+  local($path) = @_;
+
+  if (! -e $path) {
+    print STDERR  "${path} does not exist.\n";
+    die ' ';
+    }
+
+  if (! -f $path) {
+    print STDERR  "${path} is not a regular file.\n";
+    system('ls', '-dl', $path);
+    die ' ';
+    }
+  }
+

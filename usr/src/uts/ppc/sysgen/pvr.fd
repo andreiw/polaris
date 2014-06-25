@@ -1,0 +1,27 @@
+
+:comment
+
+Documents
+---------
+MPCFPE32B:
+  Programming Environments Manual for 32-Bit Implementations
+  of the PowerPC(TM) Architecture
+  Rev. 3
+  2005/09
+
+MPC7450UM:
+  MPC7450 RISC Microprocessor Reference Manual
+  Rev. 5
+  2005/01
+  
+Processor version register field descriptions
+  MPCFPE32B  page 2-21
+  MPC7450UM  page 2-17, 5-48
+
+/comment
+
+:bits 32
+:readonly
+:struct pvr
+	version		16
+	revision	16

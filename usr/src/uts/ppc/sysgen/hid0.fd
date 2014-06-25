@@ -1,0 +1,46 @@
+
+:comment
+
+Documents
+---------
+MPC7450UM:
+  MPC7450 RISC Microprocessor Reference Manual
+  Rev. 5
+  2005/01
+  
+Hardware Implementation-Dependent register 0 (HID0)
+  MPC7450UM  page 2-18
+
+/comment
+
+:bits 32
+:struct hid0
+	reserved	 4
+	tben		 1 # Time base enable
+	reserved	 1
+	sten		 1 # Software table search enable
+	hben		 1 # High BAT enable
+	nap		 1 # Nap mode enable
+	sleep		 1 # Sleep mode enable
+	dpm		 1 # Dynamic poer management enable
+	reserved	 1
+	bhtclr		 1 # Clear branch history table
+	xaen		 1 # Extended addressing enabled
+	nhr		 1 # Not hard reset
+	ice		 1 # Instruction cache enable
+	dce		 1 # Data cache enable
+	ilock		 1 # Instruction cache lock
+	dlock		 1 # Data cache lock
+	icfi		 1 # Instruction cache flash invalidate
+	dcfi		 1 # Data cache flash invalidate
+	spd		 1 # Speculative data cache, instruction cache disable
+	reserved	 1
+	xbsen		 1 # Extended BAT block size enable
+	sge		 1 # Store gathering enable
+	reserved	 1
+	btic		 1 # Branch target instruction cache enable
+	lrstk		 1 # Link register stack enable
+	fold		 1 # Branch folding enable
+	bht		 1 # Branch history table enable
+	nopdst		 1 # No-op dst, dstt, dstst, abd dststt instructions
+	nopti		 1 # No-op the data cache touch instructions

@@ -1,0 +1,14 @@
+ident	"@(#)INSTALL.top	1.1	00/12/21 SMI"
+
+Copyright (c) 2000 by Sun Microsystems, Inc.
+All rights reserved.
+
+To install, run make:
+
+	% make
+
+Then, as root, run "make install":
+
+	# make install
+
+See README for more details.

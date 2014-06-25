@@ -1,0 +1,77 @@
+#
+# CDDL HEADER START
+#
+# The contents of this file are subject to the terms of the
+# Common Development and Distribution License (the "License").
+# You may not use this file except in compliance with the License.
+#
+# You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+# or http://www.opensolaris.org/os/licensing.
+# See the License for the specific language governing permissions
+# and limitations under the License.
+#
+# When distributing Covered Code, include this CDDL HEADER in each
+# file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+# If applicable, add the following below this CDDL HEADER, with the
+# fields enclosed by brackets "[]" replaced with your own identifying
+# information: Portions Copyright [yyyy] [name of copyright owner]
+#
+# CDDL HEADER END
+#
+
+#
+# Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+# Use is subject to license terms.
+#
+# ident	"@(#)mapfile-vers	1.40	06/07/11 SMI"
+#
+# Generic interface definition for usr/src/cmd/sgs/libld.
+#
+# For information regarding the establishment of versioned definitions see:
+# 	The Linker and Libraries Manual (version 2.5 or greater)
+# This is part of the Developers Guide in the Answerbook.  Specifically refer
+# to Chapter 2 under section "Defining Additional Symbols" through section
+# "Reducing Symbol Scope", and Chapter 5 "Versioning".
+#
+# For specific OSNET rules for the modification (evolution) of these version
+# definitions see:
+#	Policy for Shared Library Version Names and Interface Definitions
+
+SUNWprivate_4.2 {
+	global:
+		dbg_print;
+
+		ld32_main;
+		ld64_main;
+
+		ld32_create_outfile;
+		ld64_create_outfile;
+		ld32_ent_setup;
+		ld64_ent_setup;
+		ld32_init_strings;
+		ld64_init_strings;
+		ld32_make_sections;
+		ld64_make_sections;
+		ld32_ofl_cleanup;
+		ld64_ofl_cleanup;
+		ld32_process_open;
+		ld64_process_open;
+		ld32_reloc_init;
+		ld64_reloc_init;
+		ld32_reloc_process;
+		ld64_reloc_process;
+		ld32_sym_validate;
+		ld64_sym_validate;
+		ld32_update_outfile;
+		ld64_update_outfile;
+	local:
+		*;
+};
+
+# The following functions must be provided by our caller, or one of the
+# callers dependencies.
+
+{
+	global:
+		eprintf =	FUNCTION extern;
+};

@@ -1,0 +1,37 @@
+
+:comment
+
+Documents
+---------
+MPC7450UM:
+  MPC7450 RISC Microprocessor Reference Manual
+  Rev. 5
+  2005/01
+  
+Hardware Implementation-Dependent register 1 (HID1)
+  MPC7450UM  page 2-23
+
+/comment
+
+:bits 32
+:struct hid1
+	emcp		 1 # Machine check signal enable
+	reserved	 1
+	eba		 1 # enable 60x/MPX bus address parity checking
+	ebd		 1 # enable 60x/MPX bus data    parity checking
+	bclk		 1 # CLK_OUT output enable and clock type selection
+	reserved	 1
+	eclk		 1 # CLK_OUT output enable and clock type selection
+	par		 1 # Disable precharge for /ARTRY, /SHD0, and /SHD1 pins
+	dfs4		 1 # Dynamic frequency switching (DFS) divide-by-4 mode.
+	dfs2		 1 # Dynamic frequency switching (DFS) divide-by-2 mode.
+	reserved	 4
+	pc5		 1,ro # PLL configuration mode, bit 5
+	pc0		 1,ro # PLL configuration mode, bit 0
+	pc1		 1,ro # PLL configuration mode, bit 1
+	pc2		 1,ro # PLL configuration mode, bit 2
+	pc3		 1,ro # PLL configuration mode, bit 3
+	pc4		 1,ro # PLL configuration mode, bit 4
+	syncbe		 1 # Address broadcast enable for sync, eieio
+	abe		 1 # Address broadcast enable for dcbf, et al
+	reserved	10 # Value is 0x80

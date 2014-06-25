@@ -1,0 +1,46 @@
+
+:comment
+
+Documents
+---------
+MPCFPE32B:
+  Programming Environments Manual for 32-Bit Implementations
+  of the PowerPC(TM) Architecture
+  Rev. 3
+  2005/09
+
+MPC7450UM:
+  MPC7450 RISC Microprocessor Reference Manual
+  Rev. 5
+  2005/01
+  
+Machine State Register (MSR)
+  MPCFPE32B  page 2-18 .. 2-21
+  MPC7450UM  page 2-13 .. 2-15
+
+/comment
+
+:bits 32
+:struct msr
+	reserved	 6
+	vec		 1 # AltiVec vector unit available
+	reserved	 6
+	pow		 1 # Power management enable
+	reserved	 1
+	ile		 1 # Exception little-endian mode
+	ee		 1 # External interrupt enable
+	pr		 1 # Privilege level
+	fp		 1 # Floating-point available
+	me		 1 # Machine check enable
+	fe0		 1 # IEEE floating-point exception mode 0
+	se		 1 # Single-step trace enable
+	be		 1 # Branch trace enable
+	fe1		 1 # IEEE floating-point exception mode 1
+	reserved	 1
+	ip		 1 # Exception prefix
+	ir		 1 # Instruction address translation
+	dr		 1 # Data address translation
+	reserved	 1
+	pmm		 1 # Performance monitor marked mode
+	ri		 1 # Recoverable interrupt
+	le		 1 # Little-endian mode enable

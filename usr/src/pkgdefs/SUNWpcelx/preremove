@@ -1,0 +1,15 @@
+#! /bin/sh
+#
+# ident	"@(#)preremove	1.8	00/07/17 SMI"
+#
+# Copyright (c) 1999 by Sun Microsystems, Inc.
+# All rights reserved.
+#
+
+PATH="/bin:/usr/bin:/usr/sbin:${PATH}"
+export PATH
+
+rem_drv -b ${BASEDIR} pcelx
+rm -f ${BASEDIR}/dev/pcelx*
+
+exit 0

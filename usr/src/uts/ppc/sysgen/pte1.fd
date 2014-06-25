@@ -1,0 +1,31 @@
+
+:comment
+
+Documents
+---------
+MPCFPE32B:
+  Programming Environments Manual for 32-Bit Implementations
+  of the PowerPC(TM) Architecture
+  Rev. 3
+  2005/09
+
+MPC7450UM:
+  MPC7450 RISC Microprocessor Reference Manual
+  Rev. 5
+  2005/01
+  
+PTE word 1
+  MPCFPE32B  page 7-30
+  MPC7450UM  page 5-36
+
+/comment
+
+:bits 32
+:struct pte1
+	rpn		20 # Real (physical) page number
+	xpn		 3 # Extended page number (bits 0-2)
+	r		 1 # Reference bit
+	c		 1 # Changed bit
+	wimg		 4 # Memory/cache control bits
+	x		 1 # Extended page number (bit 3)
+	pp		 2 # Page protection bits

@@ -1,0 +1,164 @@
+#! /usr/bin/ksh
+#
+# CDDL HEADER START
+#
+# The contents of this file are subject to the terms of the
+# Common Development and Distribution License (the "License").
+# You may not use this file except in compliance with the License.
+#
+# You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+# or http://www.opensolaris.org/os/licensing.
+# See the License for the specific language governing permissions
+# and limitations under the License.
+#
+# When distributing Covered Code, include this CDDL HEADER in each
+# file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+# If applicable, add the following below this CDDL HEADER, with the
+# fields enclosed by brackets "[]" replaced with your own identifying
+# information: Portions Copyright [yyyy] [name of copyright owner]
+#
+# CDDL HEADER END
+#
+
+#
+# Copyright 2006 Sun Microsystems Laboratories.  All rights reserved.
+# Use is subject to license terms.
+#
+# ident	"@(#)prototype.ksh	1.14	06/02/08 SMI"
+#
+
+explain_tmp_files()
+{
+  echo "tmp/svn-status-top   - output of svn status --verbose --show-updates"
+  echo "tmp/interesting.txt  - added, modified, or out of date files"
+  echo "                         selected lines from tmp/svn-status-top"
+  echo "tmp/foreign.fl       - files in tmp/interesting.txt that are not svn controlled"
+  echo "                         format: pure list of file names, relative to workspace"
+  echo "tmp/generated.fl     - subset of tmp/foreign.fl - files that have been identified"
+  echo "                       as having been automatically generated, and therefore are"
+  echo "                       not so interesting after all."
+  echo "                         format: pure list of file names, relative to workspace"
+  echo "tmp/active.fl        - simple list of "active" files"
+  echo "                         same files as tmp/interesting.txt"
+  echo "                         format: pure list of file names, relative to workspace"
+  echo "tmp/active-ch.fl     - list of active .c and .h files"
+  echo "                       These files get cstyled"
+  echo "tmp/active-h.fl      - list of active .h files"
+  echo "                       hdrchk is run on these files."
+  echo "tmp/cstyle.out       - cstyle -P -p output for all active .c .h .s files"
+  echo "tmp/hdrchk.out       - hdrchk output for all active .h files"
+}
+
+
+setup_tmp()
+{
+    cd "$CODEMGR_WS" || exit 2
+    if [[ ! -d tmp ]]
+    then
+        mkdir tmp
+    fi
+}
+
+make_interesting()
+{
+    rm -f tmp/t.*
+    if [[ $reuse -ne 0 && -f tmp/svn-status-top ]]
+    then
+        : OK, use existing tmp/svn-status-top
+    else
+        svn status --verbose --show-updates >| tmp/svn-status-top
+    fi
+    ./onbld/bin/svn-interesting < tmp/svn-status-top >| tmp/t.interesting.txt
+    mv tmp/t.interesting.txt tmp/interesting.txt
+    if [[ -s tmp/foreign.fl && -s tmp/generated.fl ]]
+    then
+        : OK - do nothing
+    else
+        rm -f tmp/foreign.fl tmp/generated.fl
+        sed -n -e '/^?/s/.* //p' tmp/interesting.txt | sort -o tmp/t.foreign.fl
+        egrep -il 'generated|Made automatically|automatically made' \
+            $( cat tmp/t.foreign.fl ) > tmp/t.generated.fl
+        # audit_uevents.h contains no comments saying that it is generated,
+        # but we know it is.
+        # They ought to come up with a standard (or convention)
+        echo 'usr/src/lib/libbsm/audit_uevents.h' >> tmp/t.generated.fl
+        sort -o tmp/t.generated.fl tmp/t.generated.fl
+        mv tmp/t.foreign.fl tmp/foreign.fl
+        mv tmp/t.generated.fl tmp/generated.fl
+        ./onbld/bin/svn-interesting < tmp/svn-status-top >| tmp/t.interesting.txt
+        mv tmp/t.interesting.txt tmp/interesting.txt
+    fi
+    sed -e 's/.*   //' tmp/interesting.txt >| tmp/active.fl
+}
+
+make_cstyle()
+{
+    cp /dev/null tmp/cstyle.out
+    egrep -h '\.[ch]$' tmp/active.fl >| tmp/active-ch.fl
+    if [[ -s tmp/active-ch.fl ]]
+    then
+        for f in $( cat tmp/active-ch.fl )
+        do
+            # Don't count on the file existing;
+            # it may be interesting precisely because
+            # it was checked in by someone else.
+            if [[ -f "$f" ]]
+            then
+                cstyle -P -p "$f" >> tmp/cstyle.out
+            fi
+        done
+    fi
+}
+
+make_hdrchk()
+{
+    cp /dev/null tmp/hdrchk.out
+    egrep -h '\.h$' tmp/active.fl >| tmp/active-h.fl
+    if [[ -s tmp/active-h.fl ]]
+    then
+        for f in $( cat tmp/active-h.fl )
+        do
+            # Don't count on the file existing;
+            # it may be interesting precisely because
+            # it was checked in by someone else.
+            if [[ -f "$f" ]]
+            then
+                hdrchk "$f"
+            fi
+        done >> tmp/hdrchk.out 2>&1
+    fi
+}
+
+help=0
+reuse=0
+while getopts hr flag
+do
+	case "$flag" in
+	h)
+		help=1
+		;;
+	r)
+		reuse=1
+		;;
+	\?)
+		echo "usage: make-interesting [ -h ]"
+		exit 1
+		;;
+	esac
+done
+
+shift $((OPTIND - 1))
+
+if (( help > 0 ))
+then
+    explain_tmp_files
+else
+    setup_tmp
+    make_interesting
+    make_cstyle
+    make_hdrchk
+    explain_tmp_files > tmp/README
+    cat tmp/README
+fi
+
+exit 0

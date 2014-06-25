@@ -1,0 +1,58 @@
+#! /usr/bin/ksh
+#
+# CDDL HEADER START
+#
+# The contents of this file are subject to the terms of the
+# Common Development and Distribution License (the "License").
+# You may not use this file except in compliance with the License.
+#
+# You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+# or http://www.opensolaris.org/os/licensing.
+# See the License for the specific language governing permissions
+# and limitations under the License.
+#
+# When distributing Covered Code, include this CDDL HEADER in each
+# file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+# If applicable, add the following below this CDDL HEADER, with the
+# fields enclosed by brackets "[]" replaced with your own identifying
+# information: Portions Copyright [yyyy] [name of copyright owner]
+#
+# CDDL HEADER END
+#
+
+#
+# Copyright 2006 Sun Microsystems Laboratories.  All rights reserved.
+# Use is subject to license terms.
+#
+# ident	"@(#)prototype.ksh	1.14	06/02/08 SMI"
+#
+
+# svn does not maintain Unix file permissions.
+# At least I don't know of any svn mechanism for checking
+# out a file and specifying its permissions.
+# So, after checking out a tree for the first time,
+# we must explicitly make some of our scripts executable.
+#
+cd $CODEMGR_WS || exit 2
+chmod 755 onbld/bin/* usr/src/uts/buildstatic
+
+# make setup will fail, unless the directory leading up to the files,
+# ${ROOT}/usr/include/sys/scsi/adapters/*.h is created, first.
+# This seems to be a defect in the make files.
+#
+ROOT_INC="${ROOT}/usr/include"
+if [ ! -d "${ROOT_INC}/sys/scsi/adapters" ]
+then
+    mkdir -p "${ROOT_INC}/sys/scsi/adapters"
+fi
+
+GNU_ROOT=
+cd usr/src
+make setup
+
+# Some Polaris scripts use $CODEMGR_WS/tmp.  Ensure that it exists.
+#
+if [[ ! -d $CODEMGR_WS/tmp ]]
+then
+    mkdir $CODEMGR_WS/tmp
+fi

@@ -1,0 +1,49 @@
+#!/sbin/sh
+#
+# Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+# Use is subject to license terms.
+#
+# ident	"@(#)xntp	1.3	06/06/07 SMI"
+#
+
+. /lib/svc/share/smf_include.sh
+
+if [ ! -f /etc/inet/ntp.conf ]; then
+	echo "Error: Configuration file '/etc/inet/ntp.conf' not found." \
+	    "  See xntpd(1M)."
+	exit $SMF_EXIT_ERR_CONFIG
+fi
+
+ARGS=`/usr/bin/nawk '
+	BEGIN {
+	    first = 1
+	}
+	/^[ \t]*#/ {
+	    next
+	}
+	/^multicastclient[ \t]+/ {
+	    if (first) {
+		first = 0
+		printf("-s -m")
+	    }
+	    if (NF == 1)
+		printf(" 224.0.1.1")
+	    else
+		printf(" %s", $2)
+	    next
+	}
+	/^server 127.127/ {
+	    next
+	}
+	/^server[ \t]+|^peer[ \t]+/ {
+	    if (first) {
+		first = 0
+		printf("-s")
+	    }
+	    printf(" %s", $2)
+	    next
+	}
+	' /etc/inet/ntp.conf`
+# Run ntpdate to sync system to peer before starting xntpd
+[ -n "$ARGS" ] && /usr/sbin/ntpdate $ARGS
+/usr/lib/inet/xntpd

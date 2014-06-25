@@ -1,0 +1,95 @@
+#
+# CDDL HEADER START
+#
+# The contents of this file are subject to the terms of the
+# Common Development and Distribution License (the "License").
+# You may not use this file except in compliance with the License.
+#
+# You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+# or http://www.opensolaris.org/os/licensing.
+# See the License for the specific language governing permissions
+# and limitations under the License.
+#
+# When distributing Covered Code, include this CDDL HEADER in each
+# file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+# If applicable, add the following below this CDDL HEADER, with the
+# fields enclosed by brackets "[]" replaced with your own identifying
+# information: Portions Copyright [yyyy] [name of copyright owner]
+#
+# CDDL HEADER END
+#
+# Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+# Use is subject to license terms.
+#
+#pragma ident	"@(#)prototype_com	1.5	06/08/07 SMI"
+#
+# This required package information file contains a list of package contents.
+# The 'pkgmk' command uses this file to identify the contents of a package
+# and their location on the development machine when building the package.
+# Can be created via a text editor or through use of the 'pkgproto' command.
+
+#!search <pathname pathname ...>	# where to find pkg objects
+#!include <filename>			# include another 'prototype' file
+#!default <mode> <owner> <group>	# default used if not specified on entry
+#!<param>=<value>			# puts parameter in pkg environment
+
+# packaging files
+i pkginfo
+i copyright
+#
+# source locations relative to the prototype file
+#
+# SUNWkvmt200.v
+#
+# platform directories
+#
+d none usr 755 root sys
+d none usr/platform 755 root sys
+d none usr/platform/SUNW,Sun-Fire-T200 755 root sys
+d none usr/platform/SUNW,Netra-CP3060 755 root sys
+#
+# create links to sun4v platform
+#
+s none usr/platform/SUNW,Sun-Fire-T200/sbin=../sun4v/sbin
+#
+#
+# create lib directory 
+#
+d none usr/platform/SUNW,Sun-Fire-T200/lib 755 root bin
+d none usr/platform/SUNW,Netra-CP3060/lib 755 root bin
+#
+# add binary and libraries for prtdiag
+#
+f none usr/platform/SUNW,Sun-Fire-T200/lib/libprtdiag_psr.so.1 644 root bin
+f none usr/platform/SUNW,Netra-CP3060/lib/libprtdiag_psr.so.1 644 root bin
+
+#
+# create libpcp library
+#
+s none usr/platform/SUNW,Sun-Fire-T200/lib/libpcp.so=../../sun4v/lib/libpcp.so
+s none usr/platform/SUNW,Netra-CP3060/lib/libpcp.so=../../sun4v/lib/libpcp.so
+
+s none usr/platform/SUNW,Sun-Fire-T200/lib/libpcp.so.1=../../sun4v/lib/libpcp.so.1
+s none usr/platform/SUNW,Netra-CP3060/lib/libpcp.so.1=../../sun4v/lib/libpcp.so.1
+
+#
+# platform-dependent boot object
+#
+s none usr/platform/SUNW,Sun-Fire-T200/lib/fs=../../sun4v/lib/fs
+s none usr/platform/SUNW,Netra-CP3060/lib/fs=../../sun4v/lib/fs
+#
+# add erie link
+#
+s none usr/platform/SUNW,Sun-Fire-T1000=SUNW,Sun-Fire-T200
+#
+# add pelton link
+#
+s none usr/platform/SUNW,Netra-T2000=SUNW,Sun-Fire-T200
+#
+# add erie fujitsu link
+#
+s none usr/platform/SUNW,SPARC-Enterprise-T1000=SUNW,Sun-Fire-T200
+#
+# add ontario fujitsu link
+#
+s none usr/platform/SUNW,SPARC-Enterprise-T2000=SUNW,Sun-Fire-T200

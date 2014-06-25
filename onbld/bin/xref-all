@@ -1,0 +1,231 @@
+#! /usr/bin/ksh
+#
+# CDDL HEADER START
+#
+# The contents of this file are subject to the terms of the
+# Common Development and Distribution License (the "License").
+# You may not use this file except in compliance with the License.
+#
+# You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+# or http://www.opensolaris.org/os/licensing.
+# See the License for the specific language governing permissions
+# and limitations under the License.
+#
+# When distributing Covered Code, include this CDDL HEADER in each
+# file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+# If applicable, add the following below this CDDL HEADER, with the
+# fields enclosed by brackets "[]" replaced with your own identifying
+# information: Portions Copyright [yyyy] [name of copyright owner]
+#
+# CDDL HEADER END
+#
+
+#
+# Copyright 2006 Sun Microsystems Laboratories.  All rights reserved.
+# Use is subject to license terms.
+#
+# ident	"@(#)prototype.ksh	1.14	06/02/08 SMI"
+#
+
+# xref-all:
+#     Build cscope and tags indices for all the given directories.
+#     Default (if no directories are specified on the command line)
+#     is to use a list of "standard" subdirectories.
+#
+
+xrefs=
+xref_makefile=
+xref_opts=
+verbose=0
+while getopts cfm:px:v flag
+do
+    case "$flag" in
+    c|f|p)
+    	xref_opts="${xref_opts}${flag}"
+	;;
+    m)
+        xref_makefile="$OPTARG"
+        ;;
+    x)
+    	xrefs=$OPTARG
+    	;;
+    v)
+    	verbose = 1;	
+    	;;
+    \?)
+    	echo "usage: xref-all [-cfp] [<directory> ...]" > /dev/stderr
+    	exit 1
+    	;;
+    esac
+done
+
+shift $((OPTIND - 1))
+
+if [[ -n $@ ]]
+then
+    set -A dir_list "$@"
+else
+    set -A dir_list usr/src usr/src/uts usr/src/uts/ppc usr/src/uts/chrp
+fi
+
+if [[ -n "$CODEMGR_WS" ]]
+then
+    # If CODEMGR_WS is set, assume the environment variables we need
+    # have all been set up by an environment file suitable for bldenv.
+    :
+else
+    # If CODEMGR_WS is not set,
+    # then use a default that is locally appropriate, if any.
+    # At Sun Labs, I point to my workspace on vespa.
+    # Modify to taste.
+    #
+    if [[ -z "$HOST" ]]
+    then
+        HOST=$(uname -n)
+    fi
+    
+    case "$HOST" in
+      vespa)
+        BASE=/export/home/gs71231
+        ;;
+      *)
+        BASE=/net/vespa.sfbay/export/home/gs71231
+        ;;
+    esac
+    
+    GATE=polaris/hat
+    
+    export CODEMGR_WS="$BASE/$GATE/ws"
+    export SRC="$CODEMGR_WS/usr/src"
+    
+    # Location of encumbered binaries.
+    export ON_CLOSED_BINS="$CODEMGR_WS/closed"
+    
+    # path to onbld tool binaries
+    ONBLD_BIN=/opt/onbld/bin
+fi
+if [[ -d "$CODEMGR_WS/Codemgr_wsdata" ]]
+then
+    : OK - looks like a workspace managed by teamware.
+elif [[ -d "$CODEMGR_WS/.svn" ]]
+then
+    : OK - looks like a workspace managed by subversion.
+else
+    echo "Unknown workspace type."
+    echo "$CODEMGR_WS should be a workspace"
+    echo "controlled by either teamware or subversion."
+    exit 1
+fi
+
+if [[ -f /home/dmick/bin/newctags ]]
+then
+    export CTAGS=/home/dmick/bin/newctags
+fi
+export CSFLAGS="-bq"
+
+# Allow workspace to supply its own xref program.
+#
+if [[ -f "$CODEMGR_WS/onbld/bin/xref" ]]
+then
+    XREF="$CODEMGR_WS/onbld/bin/xref"
+elif [[ -f "$CODEMGR_WS/bin/xref" ]]
+then
+    XREF="$CODEMGR_WS/bin/xref"
+else
+    XREF=/opt/onbld/bin/xref
+fi
+
+# Allow workspace to supply its own xref.mk program.
+# For example, we use a variant that -prunes .svn directories.
+#
+if [[ -f "$CODEMGR_WS/onbld/bin/xref.mk" ]]
+then
+    export XREFMK="$CODEMGR_WS/onbld/bin/xref.mk"
+elif [[ -f "$CODEMGR_WS/bin/xref.mk" ]]
+then
+    export XREFMK="$CODEMGR_WS/bin/xref.mk"
+fi
+
+# Allow workspace to supply its own FLGFLP program.
+#
+if [[ -f "$CODEMGR_WS/onbld/bin/flg.flp" ]]
+then
+    export FLGFLP="$CODEMGR_WS/onbld/bin/flg.flp"
+elif [[ -f "$CODEMGR_WS/bin/flg.flp" ]]
+then
+    export FLGFLP="$CODEMGR_WS/bin/flg.flp"
+else
+    export FLGFLP=/opt/onbld/bin/flg.flp
+fi
+
+# Modern Solaris releases define various binaries
+# The xref system (/opt/onbld/bin/xref and /opt/onbld/bin/xref.mk)
+# relies on these definitions.  Older source trees will not have
+# these variables defined.  Supply the definitions we need
+# in order to work even on older source trees.
+#
+if fgrep -s PERL "$SRC/Makefile.master"
+then
+    : Assume Makefile.master defines all the programs we need
+else
+    # This workspace does not define PERL.
+    # It is probably a "legacy" workspace,
+    # which predates the xref system, and
+    # does not define all the binaries that xref.mk uses.
+    export CAT=/usr/bin/cat
+    export ECHO=echo
+    export FIND=/usr/bin/find
+    export GREP=/usr/bin/grep
+    export PERL=/usr/bin/perl
+    export RM=/usr/bin/rm
+    export SED=/usr/bin/sed
+    export SORT=/usr/bin/sort
+    export TOUCH=/usr/bin/touch
+    export XARGS=/usr/bin/xargs
+fi
+
+# Do not rely on MACH in the environment.
+# We could be doing cross development.
+# For example, developing OpenSolaris/PowerPC
+# on an x86 build machine, using GNU C compiler,
+# generating code for PPC.
+#
+MACH=$(uname -p)
+
+for dir in ${dir_list[*]}
+do
+    echo dir="${dir}"
+done
+
+# Check all directories first
+#
+for dir in ${dir_list[*]}
+do
+    cd "${CODEMGR_WS}/${dir}" || exit 2
+done
+
+
+# OK, time for the real work.
+# Build cscope and tags files for each directory.
+#
+if [[ -z "$xrefs" ]]
+then
+    xrefs='cscope.out,ctags'
+fi
+args="-x ${xrefs}"
+
+if [[ -n "$xref_opts" ]]
+then
+    args="${args} -${xref_opts}"
+fi
+
+if [[ -n "$xref_makefile" ]]
+then
+    args="${args} -m ${xref_makefile}"
+fi
+
+for dir in ${dir_list[*]}
+do
+    cd "${CODEMGR_WS}/${dir}" || exit 2
+    ${XREF} $args
+done

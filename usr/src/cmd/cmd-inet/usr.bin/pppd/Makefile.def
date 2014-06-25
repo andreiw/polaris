@@ -1,0 +1,13 @@
+#
+#pragma ident	"@(#)Makefile.def	1.1	00/12/21 SMI"
+#
+# Copyright (c) 2000 by Sun Microsystems, Inc.
+# All rights reserved.
+#
+# cmd/cmd-inet/usr.bin/pppd/Makefile.def
+#
+
+ETCPPPDIR=		$(ROOTETC)/ppp
+ETCPPPPLUGINDIR_ABS=	/etc/ppp/plugins
+LIBPPPPLUGINDIR=	$(ROOT)/usr/lib/inet/ppp
+LIBPPPPLUGINDIR_ABS=	/usr/lib/inet/ppp

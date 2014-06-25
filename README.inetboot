@@ -1,0 +1,100 @@
+===================================
+Network Booting OpenSolaris/PowerPC
+Noah Yan <noah.yan@gmail.com>
+===================================
+
+Building the NFS Boot
+---------------------
+Setup the build environment, also make sure to
+	export EXTRA_OPTIONS="-D__powerpc -U_BIG_ENDIAN"
+
+Build the headers in usr/src/head/ (mainly for rpcsvc/*.h)
+	( cd usr/src/head ; make )
+
+Build the RPC headers for NFS in usr/src/uts/common/rpc/
+	( cd usr/src/uts/common/rpc ; make )
+
+Build the ppc/sys headers, mainly the msr.h file
+	( cd usr/src/uts/ppc/sysgen ; make all )
+
+Build and install usr/src/stand/
+	( cd usr/src/stand ; make ; make install )
+
+Build the nfsboot (inetboot) bits in usr/src/psm/
+	( cd usr/src/psm ; make )
+
+The "inetboot" binary will be in usr/src/psm/stand/boot/ppc/chrp/
+
+NFS Boot Server Setup
+---------------------
+1) Initial steps
+Create a /export/home/boot/ directory to store all boot related files
+and logs.  We'll put the initial loader binary, in this case "inetboot",
+in the /export/home/boot/tftpboot/ directory.  The root filesystem will
+go in /export/home/boot/nfsroot/ (e.g. platform/ppc/kernel/unix, kernel/genunix,
+and kernel/misc/krtld).
+
+Please note that the boot client and server MUST be on the same subnet in this setup.
+
+2) tftpd
+Enable the tftp service in /etc/inetd.conf
+	tftp dgram udp6 wait root /usr/sbin/in.tftpd in.tftpd -s /export/home/boot/tftpboot
+
+Start the server with /usr/sbin/inetconv,  which will enable the tftpd
+service, or use
+	svcadm enable svc:/network/tftp/udp6:default
+
+after the first inetconv.
+
+3) rarpd
+Put the mac/hostname mapping for the boot client in /etc/ethers
+	01:23:45:67:89:AB boot-client
+
+Please note that the hostname should also be set in either /etc/hosts or
+other naming service. We put a "192.168.1.11 boot-client"
+entry for the client and "192.168.1.10 boot-server" for the boot server
+in out /etc/hosts file as an example.
+
+Start the rarp daemon with a
+	/usr/sbin/in.rarpd -d bge 1
+
+to listen the bge1 interface that is connected to the same switch as the boot client
+
+4) bootparamd
+Add an entry for boot client in /etc/bootparams
+	boot-client root=boot-server:/export/home/boot/nfsroot domain=your.domain.here
+
+Start the bootparam daemon with
+	/usr/sbin/rpc.bootparamd -d
+
+5) NFS Server and nfsroot
+Share the nfsroot directory with an entry in /etc/dfs/dfstab
+	share -F nfs -o root=192.168.1.10 -d "Solaris NFS Root" /export/home/boot/nfsroot
+
+and start the NFS server with an "exportfs -av", which will start the
+NFS-related services.
+
+Note: properly set the domain name in the nfsd config file
+(/etc/default/nfs, the NFSMAPID_DOMAIN=your.domain.here).
+Check dmesg(1) output for any NFS errors.  Also make sure the
+routing table is set to route the 192.168.1.0 request to bge1 interface.
+
+Booting the Client Machine (Serial Console or VGA)
+------------------------------------------------------
+Setup the serial connection:
+	tip -115200 /dev/tty00
+
+At the OpenFirmware prompt of the boot client, find or create the ethernet device alias.
+For example, in ODW it is "eth", in PowerMac G4 it is "ethernet", or create one:
+	devalias ethernet /pci@80000000/ethernet@D
+
+On ODW, make sure the client-ip and server-ip addresses match the configuration
+on the boot server. Boot the system with
+	boot eth:192.168.1.10,inetboot
+
+On PowerMac G4 without proper setup of DHCP, boot with
+	boot ethernet:192.168.1.10,inetboot,<client-ip>;<netmask>,;<router-ip>
+
+When the loader prompt asks for the kernel, respond with the location under
+the NFS root filesystem you've created:
+	/platform/ppc/kernel/unix

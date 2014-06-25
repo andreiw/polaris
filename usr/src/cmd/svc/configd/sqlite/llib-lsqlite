@@ -1,0 +1,12 @@
+/*
+ * Copyright 2004 Sun Microsystems, Inc.  All rights reserved.
+ * Use is subject to license terms.
+ */
+
+#pragma ident	"@(#)llib-lsqlite	1.2	04/11/12 SMI"
+
+/* LINTLIBRARY */
+/* PROTOLIB1 */
+
+#include "sqlite.h"
+#include "sqlite-misc.h"

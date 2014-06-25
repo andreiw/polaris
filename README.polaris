@@ -1,0 +1,43 @@
+===================================
+Building OpenSolaris/PowerPC
+===================================
+
+(Note that this document is written with the bash shell in mind.)
+
+First we'll need to set up the tree for building.  This will usually
+only need to be done once.  In the root of the source tree, there is a
+polaris.sh script (which is originally copied from
+usr/src/tools/env/polaris.sh and modified).  Edit it to match your build
+environment.  Then run:
+
+  bldenv -d polaris.sh
+  set GNU_ROOT=
+  ksh $WS/onbld/bin/setup-polaris
+  exit
+
+After that, every time you want to build, you'll set up the build
+environment with a
+
+  bldenv -d polaris.sh
+  cd usr/src/uts
+
+Then just run a "make".  That should build the
+usr/src/uts/chrp/unix/debug32/unix platform-specific binary and the
+usr/src/uts/ppc/genunix/debug32/genunix architecture generic binary.
+Both of these are dynamically linked and meant to be linked at runtime
+via krtld.  Unfortunately, we don't have a working krtld (or any PowerPC
+specific ld) yet, so we'll need to build a static binary.  To that end,
+there's a script in usr/src/uts/ called "buildstatic" that you'll run
+with a
+
+  "./builstatic"
+
+That will generate a usr/src/uts/chrp/unix/debug32/unix-static binary
+combining unix and genunix, with debugging symbols, and a stripped
+version of it in usr/src/uts/unix.  The latter binary, you'll use with
+the nfsboot to test boot.
+
+Also note that in usr/src/uts/chrp/os/mlsetup.c, there is a SETUP_BOOTOPS
+#define that should be set if you want to boot the image from disk without
+the help of a boot loader.  This mechanism is not the preferred method,
+isn't tested and probably won't work anyways.  You've been warned.

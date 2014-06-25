@@ -1,0 +1,68 @@
+/*
+ * CDDL HEADER START
+ *
+ * The contents of this file are subject to the terms of the
+ * Common Development and Distribution License (the "License").
+ * You may not use this file except in compliance with the License.
+ *
+ * You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+ * or http://www.opensolaris.org/os/licensing.
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ * When distributing Covered Code, include this CDDL HEADER in each
+ * file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+ * If applicable, add the following below this CDDL HEADER, with the
+ * fields enclosed by brackets "[]" replaced with your own identifying
+ * information: Portions Copyright [yyyy] [name of copyright owner]
+ *
+ * CDDL HEADER END
+ */
+
+/*
+ * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+ * Use is subject to license terms.
+ */
+
+#ifndef _IOBOARD_H
+#define	_IOBOARD_H
+
+#pragma ident	"@(#)ioboard.h	1.3	06/05/09 SMI"
+
+#include <libdevinfo.h>
+#include <did.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#define	IOB_ENUMR_VERS	1
+
+#define	IOBOARD	"ioboard"
+
+/*
+ * For all machines that currently use this enumerator, buses have one
+ * of the following addresses.
+ */
+#define	IOB_BUSADDR1	0x600000
+#define	IOB_BUSADDR2	0x700000
+
+extern tnode_t *ioboard_declare(tnode_t *, topo_instance_t, void *,
+    di_prom_handle_t, topo_mod_t *);
+
+extern int platform_iob_enum(tnode_t *, topo_instance_t, topo_instance_t,
+    did_hash_t *, di_prom_handle_t, topo_mod_t *);
+extern int platform_iob_label(tnode_t *, nvlist_t *, nvlist_t **, topo_mod_t *);
+
+/*
+ * This routine works for splitting up the string we get from
+ * di_bus_addr() for all machines that currently use this enumerator.
+ */
+extern did_t *split_bus_address(did_hash_t *, di_node_t, uint_t, uint_t,
+    int, int, int *, int *, int *, di_prom_handle_t, topo_mod_t *);
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* _IOBOARD_H */

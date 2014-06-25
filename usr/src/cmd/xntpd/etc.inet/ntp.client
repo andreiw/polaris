@@ -1,0 +1,10 @@
+# ident	"@(#)ntp.client	1.3	00/07/17 SMI"
+#
+# /etc/inet/ntp.client
+#
+# An example file that could be copied over to /etc/inet/ntp.conf; it
+# provides a configuration for a host that passively waits for a server
+# to provide NTP packets on the ntp multicast net.
+#
+
+multicastclient 224.0.1.1

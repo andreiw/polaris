@@ -1,0 +1,283 @@
+		     OpenSolaris Buildable Source
+		@(#)README.opensolaris	1.46	2006/02/07 SMI
+
+
+Note: if this is your first OpenSolaris installation, please see the
+currently known issues section below to see the minimum build of
+Solaris Express - Community Release required to build and install
+OpenSolaris.  Either an initial install or an upgrade will work,
+provided you use the "Entire Distribution" metacluster.
+
+This delivery of the Buildable Source consists of 6 pieces:
+
+1. source tarball (on-src-DATE.tar.bz2)
+2. encumbered binaries tarball (on-closed-bins-DATE.PLATFORM.tar.bz2)
+3. compiler (Sun Studio 10 is the preferred compiler, and it is free
+   for OpenSolaris community members.  You can also use gcc; more on
+   that below.)
+4. ON build tools package (SUNWonbld-DATE.PLATFORM.tar.bz2)
+5. Additional build tools, at least for SPARC
+   (opensolaris-build-extras-DATE.PLATFORM.tar.bz2)
+6. Pre-built BFU archives (on-bfu-DATE.PLATFORM.tar.bz2)
+
+If you just want to install the pre-built archives, you'll need the ON
+build tools and the BFU archives.  The tar file will unpack the
+archives into archives-DATE/PLATFORM/ (e.g.,
+archives-20050612/i386/).  You should review Section A
+(changes since the last delivery) and Section B (known issues) before
+following the BFU instructions in the Developer's Reference 
+(http://www.opensolaris.org/os/community/onnv/devref_toc/).
+
+If you want to build from source, you will need the source, compiler,
+ON tools, and "extras" tools.  The encumbered binaries tarball contains
+complete binaries (libraries, kernel modules, commands) that are
+compatible with the source.  These are binaries that cannot be built
+using only the source tarball for one reason or another.  If you wish
+to build the kernel (or some portion of it), or if you wish to build a
+complete set of installable archives, you will want the encumbered
+binaries.
+
+The buildable source contains the source for our high key-strength
+crypto, known as the Encryption Kit (SUNWcry, SUNWcryr, SUNWcryptoint).
+Please note that certain countries restrict the redistribtuion of
+high key-strength crypto.  If you live in one of these countries,
+it is your responsibility to ensure that you are complying with your
+country's laws in this area.
+
+For general questions on the buildable source, please ask on the
+OpenSolaris Help discussion list (opensolaris-help <at> opensolaris
+<dot> org).  For detailed comments about the code, please use
+OpenSolaris Code discussion list.  Please note that the mailing lists
+are configured to only allow posts via the web forum interface or from
+list subscribers.
+
+
+Currently Known Issues
+----------------------
+	These were some of the major known issues at the time of this
+delivery.  The most recent list is available on the OpenSolaris.org
+website in the Nevada community at:
+http://opensolaris.org/os/community/onnv/known_issues/
+
+The current minimum SXCR build needed to build the OpenSolaris sources
+is Nevada build 32.
+
+1. The sources cannot be used to generate Solaris (pkgadd(1m))
+   packages.
+
+2. The following make(1) targets are known not to work:
+    - make lint
+    - make check
+
+3. Non-DEBUG kernel builds have not been tested.  Systems that require
+   the ata driver are known not to work with non-DEBUG builds.
+
+4. "Install -i" has not been tested on all platforms.  It is known not
+   to work for the lw8 platform.
+
+5. Cross-compilation between SPARC and x86 is not supported.  But
+   builds on x86 systems (amd64 or i386) will build both amd64 and
+   i386 binaries.
+
+   This is unlikely to be fixed any time soon.  If you want to build
+   both SPARC and x86, your choices are (a) create two workspaces, or
+   (b) access a single workspace using NFS.  If you use a single
+   workspace, you'll want to do a "make clean" or "make clobber"
+   before building the other platform.  Note that nightly(1) will do a
+   "make clobber" for you.
+
+6. You may see console warnings like
+
+     Feb 26 13:55:48 magneto sshd[100804]: libpkcs11: Cannot load PKCS#11
+      library /usr/lib/security/pkcs11_softtoken_extra.so.  dlerror:
+      ld.so.1: /usr/lib/ssh/sshd: fatal:
+      /usr/lib/security/pkcs11_softtoken_extra.so: open failed: No
+      such file or directory. See cryptoadm(1M). Skipping this plug-in.
+     Feb 26 13:55:48 magneto sshd[100804]: Kerberos mechanism library
+      initialization error: unknown error.
+
+   These messages can be ignored unless you need working crypto (e.g.,
+   Kerberos).  To fix, change pkcs11_softtoken_extra.so to
+   pkcs11_softtoken.so in /etc/crypto/pkcs11.conf and do "svcadm
+   restart cryptosvc".
+
+7. When BFUing, you may see error messages like 
+
+    bfu: could not copy /net/greenline.eng/meta0/smf/post-5090532/kdmconfig.xml
+
+   These messages can be ignored, as long as you're BFUing on top
+   of Build 16 or later, as recommended above.
+
+8. bfu needs to be cleaned up so that it can easily handle flag days
+   when run externally. This has been coded and mostly tested (CR
+   4865419).  This will also fix the "could not copy" error messages.
+
+9. Zones depends on SVR4 packaging data, which is not available in
+   OpenSolaris itself currently.  Therefore Zones will not work unless
+   your distribution vendor provides packages.  Note that BFU understands
+   Zones, so that BFUing on top of a distribution, such as Solaris Express,
+   that includes package support will work and will also update any
+   existing Zones you may have configured.
+
+10. The Sun Java Web Console may not be enabled at first boot, leaving the
+    ZFS Administration application inaccessible.  To workaround this,
+    simply start the web server manually (as root):
+
+    # /usr/sbin/smcwebserver start
+
+    If the SUNWzfsg package (the ZFS Administration application) is
+    installed, the ZFS Administration application should then be available
+    from https://<host> as mentioned earlier.  The Sun
+    Java Web Console will also start automatically after subsequent
+    reboots.
+
+    Please see the following blog for more information or comments:
+        http://blogs.sun.com/roller/page/talley?entry=running_the_zfs_gui_on
+
+11. With the integration of PSARC 2003/432 (Coherent Console) in build 33, if
+    you are using an older NVidia driver on x86, you may see the following
+    warning:
+        WARNING: terminal emulator: VIS_CONS_REV 2 (see sys/visual_io.h) of
+        console fb driver not supported
+        WARNING: consconfig: terminal emulator failed to initialize
+    If you see this, please update your NVidia driver to the latest version
+    available at: http://www.nvidia.com/object/solaris_display_1.0-8178.html
+
+12. With the putback of PSARC 2005/754 FMA SNMP Agent & 6365742 fault
+    management data needs an SNMP interface, you must be using build 32
+    or later of SXCR in order to succesfully build from source.  BFU'ing
+    should work fine; FMA will continue to work, but the new SNMP plugin
+    will not load.
+    order to succesfully
+
+Installing from Source
+----------------------
+
+Once you have downloaded the tarballs that you need, here are the
+steps to build the sources.
+
+Suppose you are using /export/testws as your workspace.
+
+1. cd to /export/testws and unpack the sources and encumbered
+   binaries, e.g.,
+
+    $ bzcat on-src-DATE.tar.bz2 | tar xf -
+    $ bzcat on-closed-bins-DATE.PLATFORM.tar.bz2 | tar xf -
+
+   The sources will unpack into "usr/src" and the binaries will unpack
+   into "closed/root_PLATFORM" (i.e., closed/root_i386 or
+   closed/root_sparc).
+
+2. Install the compiler according to the instructions at the download
+   site.  (Of course, if the compilers have not changed since you last
+   installed them, there is no need to install them again.)  The result
+   should have the compilers installed in /opt/SUNWspro.
+
+   If you already have the Studio 10 compiler installed, you can use
+   it, provided you have the following patches installed:
+
+     SPARC:
+     C: 117836-02
+     C++: 117830-02
+     Backend:117832-02
+    
+     x86:
+     C: 117837-03
+     C++: 117831-01
+     Backend: 117846-05
+
+   You may find it easier to install the Studio 10 compilers using the
+   tarballs, rather than installing them as packages.
+
+   If you wish to use gcc, please note that the changes needed to build
+   with gcc have not yet been integrated into the OpenSolaris source
+   base.  To learn what the issues are, get the necessary sources, and
+   get instructions for building with gcc, please visit the OpenSolaris
+   gcc project page (http://www.opensolaris.org/os/tools/gcc).
+
+3a. Remove the existing onbld tools, if any.
+
+   - If this is the first time you are installing build tools, skip ahead
+     to step 3b.
+
+   - Otherwise, use pkgrm(1M) to remove the old package.
+
+3b. Install the current onbld tools.
+
+   - The SUNWonbld package is a pkgadd-format directory that has been
+     archived using tar and bzip2.  Unpack it in a temporary directory and
+     use pkgadd(1M) to install it.  For example:
+
+        # cd /var/tmp
+        # bzip2 -dc /path/to/SUNWonbld-DATE.PLATFORM.tar.bz2 | tar xf -
+        # pkgadd -d onbld SUNWonbld
+
+3c. Install the "extras" tools if needed for the platform you're
+    building.
+
+        # cd /opt
+        # bzip2 -dc /path/to/on-build-extras-DATE.PLATFORM.tar.bz2 \
+            | tar xf -
+
+4. Update your environment and login dot-files if this is the first
+   time you have installed the compiler and/or build tools.
+
+   - Add /opt/SUNWspro/bin and /opt/onbld/bin to your $PATH. 
+   - Either remove /usr/ucb from your $PATH, or put it at the end.
+
+5. Create an environment file to guide tools like nightly(1) and
+   bldenv(1).  
+
+   - copy /export/testws/usr/src/tools/env/opensolaris.sh to
+     /export/testws.  It doesn't have to go in /export/testws, but
+     that's a convenient place to put it.  Nor do you have to keep the
+     name opensolaris.sh, but that's the name we'll use in these notes.
+
+     Then make the following changes in your opensolaris.sh:
+
+   - change GATE to the name of the top-level directory (e.g.,
+     "testws").
+
+   - change CODEMGR_WS to the top-level path (e.g., "/export/testws").
+
+   - change STAFFER to your login.
+
+   - (optional) customize VERSION.  This is the string that "uname -v"
+     will print.
+
+6. To build a complete set of archives, cd to /export/testws, utter
+
+    nightly ./opensolaris.sh &
+
+   and find something else to work on for a few hours.  You can
+   monitor the build's progress using ptree(1).  nightly(1) will send
+   mail to $MAILTO when it has finished.  
+
+   The results mail from nightly(1) will have an overview of the build
+   results.  A copy of the mail text and a more detailed log file will
+   be available in the workspace (/export/testws/log/log.<mmdd>).
+   Pieces of the detailed log are also available under usr/src.  For
+   example, usr/src/install-i386.out will have the log from the x86
+   "make install" part of the build.
+
+   By default nightly(1) will do a "clobber" build, which includes a
+   "make clobber" and blowing away any files that earlier builds
+   installed into $ROOT (/export/testws/proto/root_PLATFORM).  To
+   bypass these steps, do an incremental build with "nightly -i
+   ./opensolaris.sh &".
+
+7. To build a specific component, first use bldenv(1) to set up
+   various environment variables, then cd to the subtree that you want
+   to build.  For example:
+
+    $ cd /export/testws
+    $ bldenv -d ./opensolaris.sh
+    [status information from bldenv]
+    $ cd usr/src/cmd/vi
+    $ dmake all
+
+   To build the kernel, run dmake(1) from usr/src/uts.
+
+Please see the Developer's Reference for information on how to install
+kernels (using Install(1)) and archives (using BFU).
+

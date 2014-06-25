@@ -1,0 +1,28 @@
+
+:comment
+
+Documents
+---------
+MPCFPE32B:
+  Programming Environments Manual for 32-Bit Implementations
+  of the PowerPC(TM) Architecture
+  Rev. 3
+  2005/09
+
+MPC7450UM:
+  MPC7450 RISC Microprocessor Reference Manual
+  Rev. 5
+  2005/01
+  
+SDR1 register bit settings
+  MPCFPE32B  page 7-40
+  MPC7450UM  page 2-17, 5-48
+
+/comment
+
+:bits 32
+:struct sdr1
+	htaborg		16 # Hash Table Origin (physical base address)
+	hatbext		 3 # Extension bits for HATBORG
+	htmext		 4 # Hash table mask extension bits
+	htabmask	 9 # Mask for page table address

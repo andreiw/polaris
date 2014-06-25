@@ -1,0 +1,1920 @@
+/*
+ * CDDL HEADER START
+ *
+ * The contents of this file are subject to the terms of the
+ * Common Development and Distribution License (the "License").
+ * You may not use this file except in compliance with the License.
+ *
+ * You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+ * or http://www.opensolaris.org/os/licensing.
+ * See the License for the specific language governing permissions
+ * and limitations under the License.
+ *
+ * When distributing Covered Code, include this CDDL HEADER in each
+ * file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+ * If applicable, add the following below this CDDL HEADER, with the
+ * fields enclosed by brackets "[]" replaced with your own identifying
+ * information: Portions Copyright [yyyy] [name of copyright owner]
+ *
+ * CDDL HEADER END
+ */
+/*
+ * Copyright 2006 Sun Microsystems, Inc.  All rights reserved.
+ * Use is subject to license terms.
+ */
+
+#pragma ident	"@(#)px_lib4v.c	1.30	06/08/18 SMI"
+
+#include <sys/types.h>
+#include <sys/sysmacros.h>
+#include <sys/ddi.h>
+#include <sys/async.h>
+#include <sys/sunddi.h>
+#include <sys/ddifm.h>
+#include <sys/fm/protocol.h>
+#include <sys/vmem.h>
+#include <sys/intr.h>
+#include <sys/ivintr.h>
+#include <sys/errno.h>
+#include <sys/hypervisor_api.h>
+#include <sys/hsvc.h>
+#include <px_obj.h>
+#include <sys/machsystm.h>
+#include <sys/hotplug/pci/pcihp.h>
+#include "px_lib4v.h"
+#include "px_err.h"
+
+/* mask for the ranges property in calculating the real PFN range */
+uint_t px_ranges_phi_mask = ((1 << 28) -1);
+
+/*
+ * Hypervisor VPCI services information for the px nexus driver.
+ */
+static	uint64_t	px_vpci_min_ver; /* Negotiated VPCI API minor version */
+static	uint_t		px_vpci_users = 0; /* VPCI API users */
+
+static hsvc_info_t px_hsvc = {
+	HSVC_REV_1, NULL, HSVC_GROUP_VPCI, PX_VPCI_MAJOR_VER,
+	PX_VPCI_MINOR_VER, "PX"
+};
+
+int
+px_lib_dev_init(dev_info_t *dip, devhandle_t *dev_hdl)
+{
+	px_nexus_regspec_t	*rp;
+	uint_t			reglen;
+	int			ret;
+
+	DBG(DBG_ATTACH, dip, "px_lib_dev_init: dip 0x%p\n", dip);
+
+	ret = ddi_prop_lookup_byte_array(DDI_DEV_T_ANY, dip, DDI_PROP_DONTPASS,
+	    "reg", (uchar_t **)&rp, &reglen);
+	if (ret != DDI_PROP_SUCCESS) {
+		DBG(DBG_ATTACH, dip, "px_lib_dev_init failed ret=%d\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	/*
+	 * Initilize device handle. The device handle uniquely identifies
+	 * a SUN4V device. It consists of the lower 28-bits of the hi-cell
+	 * of the first entry of the SUN4V device's "reg" property as
+	 * defined by the SUN4V Bus Binding to Open Firmware.
+	 */
+	*dev_hdl = (devhandle_t)((rp->phys_addr >> 32) & DEVHDLE_MASK);
+	ddi_prop_free(rp);
+
+	/*
+	 * hotplug implementation requires this property to be associated with
+	 * any indirect PCI config access services
+	 */
+	(void) ddi_prop_update_int(makedevice(ddi_driver_major(dip),
+	    PCIHP_AP_MINOR_NUM(ddi_get_instance(dip), PCIHP_DEVCTL_MINOR)), dip,
+	    PCI_BUS_CONF_MAP_PROP, 1);
+
+	DBG(DBG_ATTACH, dip, "px_lib_dev_init: dev_hdl 0x%llx\n", *dev_hdl);
+
+	/*
+	 * Negotiate the API version for VPCI hypervisor services.
+	 */
+	if (px_vpci_users++)
+		return (DDI_SUCCESS);
+
+	if ((ret = hsvc_register(&px_hsvc, &px_vpci_min_ver)) != 0) {
+		cmn_err(CE_WARN, "%s: cannot negotiate hypervisor services "
+		    "group: 0x%lx major: 0x%lx minor: 0x%lx errno: %d\n",
+		    px_hsvc.hsvc_modname, px_hsvc.hsvc_group,
+		    px_hsvc.hsvc_major, px_hsvc.hsvc_minor, ret);
+
+		return (DDI_FAILURE);
+	}
+
+	DBG(DBG_ATTACH, dip, "px_lib_dev_init: negotiated VPCI API version, "
+	    "major 0x%lx minor 0x%lx\n", px_hsvc.hsvc_major, px_vpci_min_ver);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_dev_fini(dev_info_t *dip)
+{
+	DBG(DBG_DETACH, dip, "px_lib_dev_fini: dip 0x%p\n", dip);
+
+	(void) ddi_prop_remove(makedevice(ddi_driver_major(dip),
+	    PCIHP_AP_MINOR_NUM(ddi_get_instance(dip), PCIHP_DEVCTL_MINOR)), dip,
+	    PCI_BUS_CONF_MAP_PROP);
+
+	if (--px_vpci_users == 0)
+		(void) hsvc_unregister(&px_hsvc);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_intr_devino_to_sysino(dev_info_t *dip, devino_t devino,
+    sysino_t *sysino)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_INT, dip, "px_lib_intr_devino_to_sysino: dip 0x%p "
+	    "devino 0x%x\n", dip, devino);
+
+	if ((ret = hvio_intr_devino_to_sysino(DIP_TO_HANDLE(dip),
+	    devino, sysino)) != H_EOK) {
+		DBG(DBG_LIB_INT, dip,
+		    "hvio_intr_devino_to_sysino failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	DBG(DBG_LIB_INT, dip, "px_lib_intr_devino_to_sysino: sysino 0x%llx\n",
+	    *sysino);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_intr_getvalid(dev_info_t *dip, sysino_t sysino,
+    intr_valid_state_t *intr_valid_state)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_INT, dip, "px_lib_intr_getvalid: dip 0x%p sysino 0x%llx\n",
+	    dip, sysino);
+
+	if ((ret = hvio_intr_getvalid(sysino,
+	    (int *)intr_valid_state)) != H_EOK) {
+		DBG(DBG_LIB_INT, dip, "hvio_intr_getvalid failed, ret 0x%lx\n",
+		    ret);
+		return (DDI_FAILURE);
+	}
+
+	DBG(DBG_LIB_INT, dip, "px_lib_intr_getvalid: intr_valid_state 0x%x\n",
+	    *intr_valid_state);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_intr_setvalid(dev_info_t *dip, sysino_t sysino,
+    intr_valid_state_t intr_valid_state)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_INT, dip, "px_lib_intr_setvalid: dip 0x%p sysino 0x%llx "
+	    "intr_valid_state 0x%x\n", dip, sysino, intr_valid_state);
+
+	if ((ret = hvio_intr_setvalid(sysino, intr_valid_state)) != H_EOK) {
+		DBG(DBG_LIB_INT, dip, "hvio_intr_setvalid failed, ret 0x%lx\n",
+		    ret);
+		return (DDI_FAILURE);
+	}
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_intr_getstate(dev_info_t *dip, sysino_t sysino,
+    intr_state_t *intr_state)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_INT, dip, "px_lib_intr_getstate: dip 0x%p sysino 0x%llx\n",
+	    dip, sysino);
+
+	if ((ret = hvio_intr_getstate(sysino, (int *)intr_state)) != H_EOK) {
+		DBG(DBG_LIB_INT, dip, "hvio_intr_getstate failed, ret 0x%lx\n",
+		    ret);
+		return (DDI_FAILURE);
+	}
+
+	DBG(DBG_LIB_INT, dip, "px_lib_intr_getstate: intr_state 0x%x\n",
+	    *intr_state);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_intr_setstate(dev_info_t *dip, sysino_t sysino,
+    intr_state_t intr_state)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_INT, dip, "px_lib_intr_setstate: dip 0x%p sysino 0x%llx "
+	    "intr_state 0x%x\n", dip, sysino, intr_state);
+
+	if ((ret = hvio_intr_setstate(sysino, intr_state)) != H_EOK) {
+		DBG(DBG_LIB_INT, dip, "hvio_intr_setstate failed, ret 0x%lx\n",
+		    ret);
+		return (DDI_FAILURE);
+	}
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_intr_gettarget(dev_info_t *dip, sysino_t sysino, cpuid_t *cpuid)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_INT, dip, "px_lib_intr_gettarget: dip 0x%p sysino 0x%llx\n",
+	    dip, sysino);
+
+	if ((ret = hvio_intr_gettarget(sysino, cpuid)) != H_EOK) {
+		DBG(DBG_LIB_INT, dip,
+		    "hvio_intr_gettarget failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	DBG(DBG_LIB_INT, dip, "px_lib_intr_gettarget: cpuid 0x%x\n", cpuid);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_intr_settarget(dev_info_t *dip, sysino_t sysino, cpuid_t cpuid)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_INT, dip, "px_lib_intr_settarget: dip 0x%p sysino 0x%llx "
+	    "cpuid 0x%x\n", dip, sysino, cpuid);
+
+	if ((ret = hvio_intr_settarget(sysino, cpuid)) != H_EOK) {
+		DBG(DBG_LIB_INT, dip,
+		    "hvio_intr_settarget failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_intr_reset(dev_info_t *dip)
+{
+	px_t			*px_p = DIP_TO_STATE(dip);
+	px_ib_t			*ib_p = px_p->px_ib_p;
+	px_ib_ino_info_t	*ino_p;
+
+	DBG(DBG_LIB_INT, dip, "px_lib_intr_reset: dip 0x%p\n", dip);
+
+	mutex_enter(&ib_p->ib_ino_lst_mutex);
+
+	/* Reset all Interrupts */
+	for (ino_p = ib_p->ib_ino_lst; ino_p; ino_p = ino_p->ino_next) {
+		if (px_lib_intr_setstate(dip, ino_p->ino_sysino,
+		    INTR_IDLE_STATE) != DDI_SUCCESS)
+			return (BF_FATAL);
+	}
+
+	mutex_exit(&ib_p->ib_ino_lst_mutex);
+
+	return (BF_NONE);
+}
+
+/*ARGSUSED*/
+int
+px_lib_iommu_map(dev_info_t *dip, tsbid_t tsbid, pages_t pages,
+    io_attributes_t attr, void *addr, size_t pfn_index, int flags)
+{
+	tsbnum_t	tsb_num = PCI_TSBID_TO_TSBNUM(tsbid);
+	tsbindex_t	tsb_index = PCI_TSBID_TO_TSBINDEX(tsbid);
+	io_page_list_t	*pfns, *pfn_p;
+	pages_t		ttes_mapped = 0;
+	int		i, err = DDI_SUCCESS;
+
+	DBG(DBG_LIB_DMA, dip, "px_lib_iommu_map: dip 0x%p tsbid 0x%llx "
+	    "pages 0x%x attr 0x%x addr 0x%p pfn_index 0x%llx flags 0x%x\n",
+	    dip, tsbid, pages, attr, addr, pfn_index, flags);
+
+	if ((pfns = pfn_p = kmem_zalloc((pages * sizeof (io_page_list_t)),
+	    KM_NOSLEEP)) == NULL) {
+		DBG(DBG_LIB_DMA, dip, "px_lib_iommu_map: kmem_zalloc failed\n");
+		return (DDI_FAILURE);
+	}
+
+	for (i = 0; i < pages; i++)
+		pfns[i] = MMU_PTOB(PX_ADDR2PFN(addr, pfn_index, flags, i));
+
+	/*
+	 * If HV VPCI version is 1.1 and higher, pass the BDF, phantom
+	 * function, and relax ordering information. Otherwise, justp pass
+	 * read or write attribute information.
+	 */
+	if (px_vpci_min_ver == PX_VPCI_MINOR_VER_0)
+		attr = attr & (PCI_MAP_ATTR_READ | PCI_MAP_ATTR_WRITE);
+
+	while ((ttes_mapped = pfn_p - pfns) < pages) {
+		uintptr_t	ra = va_to_pa(pfn_p);
+		pages_t		ttes2map;
+		uint64_t	ret;
+
+		ttes2map = (MMU_PAGE_SIZE - P2PHASE(ra, MMU_PAGE_SIZE)) >> 3;
+		ra = MMU_PTOB(MMU_BTOP(ra));
+
+		for (ttes2map = MIN(ttes2map, pages - ttes_mapped); ttes2map;
+		    ttes2map -= ttes_mapped, pfn_p += ttes_mapped) {
+
+			ttes_mapped = 0;
+			if ((ret = hvio_iommu_map(DIP_TO_HANDLE(dip),
+			    PCI_TSBID(tsb_num, tsb_index + (pfn_p - pfns)),
+			    ttes2map, attr, (io_page_list_t *)(ra |
+			    ((uintptr_t)pfn_p & MMU_PAGE_OFFSET)),
+			    &ttes_mapped)) != H_EOK) {
+				DBG(DBG_LIB_DMA, dip, "hvio_iommu_map failed "
+				    "ret 0x%lx\n", ret);
+
+				ttes_mapped = pfn_p - pfns;
+				err = DDI_FAILURE;
+				goto cleanup;
+			}
+
+			DBG(DBG_LIB_DMA, dip, "px_lib_iommu_map: tsb_num 0x%x "
+			    "tsb_index 0x%lx ttes_to_map 0x%lx attr 0x%x "
+			    "ra 0x%p ttes_mapped 0x%x\n", tsb_num,
+			    tsb_index + (pfn_p - pfns), ttes2map, attr,
+			    ra | ((uintptr_t)pfn_p & MMU_PAGE_OFFSET),
+			    ttes_mapped);
+		}
+	}
+
+cleanup:
+	if ((err == DDI_FAILURE) && ttes_mapped)
+		(void) px_lib_iommu_demap(dip, tsbid, ttes_mapped);
+
+	kmem_free(pfns, pages * sizeof (io_page_list_t));
+	return (err);
+}
+
+/*ARGSUSED*/
+int
+px_lib_iommu_demap(dev_info_t *dip, tsbid_t tsbid, pages_t pages)
+{
+	tsbnum_t	tsb_num = PCI_TSBID_TO_TSBNUM(tsbid);
+	tsbindex_t	tsb_index = PCI_TSBID_TO_TSBINDEX(tsbid);
+	pages_t		ttes2demap, ttes_demapped = 0;
+	uint64_t	ret;
+
+	DBG(DBG_LIB_DMA, dip, "px_lib_iommu_demap: dip 0x%p tsbid 0x%llx "
+	    "pages 0x%x\n", dip, tsbid, pages);
+
+	for (ttes2demap = pages; ttes2demap;
+	    ttes2demap -= ttes_demapped, tsb_index += ttes_demapped) {
+		if ((ret = hvio_iommu_demap(DIP_TO_HANDLE(dip),
+		    PCI_TSBID(tsb_num, tsb_index), ttes2demap,
+		    &ttes_demapped)) != H_EOK) {
+			DBG(DBG_LIB_DMA, dip, "hvio_iommu_demap failed, "
+			    "ret 0x%lx\n", ret);
+
+			return (DDI_FAILURE);
+		}
+
+		DBG(DBG_LIB_DMA, dip, "px_lib_iommu_demap: tsb_num 0x%x "
+		    "tsb_index 0x%lx ttes_to_demap 0x%lx ttes_demapped 0x%x\n",
+		    tsb_num, tsb_index, ttes2demap, ttes_demapped);
+	}
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_iommu_getmap(dev_info_t *dip, tsbid_t tsbid, io_attributes_t *attr_p,
+    r_addr_t *r_addr_p)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_DMA, dip, "px_lib_iommu_getmap: dip 0x%p tsbid 0x%llx\n",
+	    dip, tsbid);
+
+	if ((ret = hvio_iommu_getmap(DIP_TO_HANDLE(dip), tsbid,
+	    attr_p, r_addr_p)) != H_EOK) {
+		DBG(DBG_LIB_DMA, dip,
+		    "hvio_iommu_getmap failed, ret 0x%lx\n", ret);
+
+		return ((ret == H_ENOMAP) ? DDI_DMA_NOMAPPING:DDI_FAILURE);
+	}
+
+	DBG(DBG_LIB_DMA, dip, "px_lib_iommu_getmap: attr 0x%x r_addr 0x%llx\n",
+	    *attr_p, *r_addr_p);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+uint64_t
+px_get_rng_parent_hi_mask(px_t *px_p)
+{
+	return (PX_RANGE_PROP_MASK);
+}
+
+/*
+ * Checks dma attributes against system bypass ranges
+ * A sun4v device must be capable of generating the entire 64-bit
+ * address in order to perform bypass DMA.
+ */
+/*ARGSUSED*/
+int
+px_lib_dma_bypass_rngchk(dev_info_t *dip, ddi_dma_attr_t *attr_p,
+    uint64_t *lo_p, uint64_t *hi_p)
+{
+	if ((attr_p->dma_attr_addr_lo != 0ull) ||
+	    (attr_p->dma_attr_addr_hi != UINT64_MAX)) {
+
+		return (DDI_DMA_BADATTR);
+	}
+
+	*lo_p = 0ull;
+	*hi_p = UINT64_MAX;
+
+	return (DDI_SUCCESS);
+}
+
+
+/*ARGSUSED*/
+int
+px_lib_iommu_getbypass(dev_info_t *dip, r_addr_t ra, io_attributes_t attr,
+    io_addr_t *io_addr_p)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_DMA, dip, "px_lib_iommu_getbypass: dip 0x%p ra 0x%llx "
+	    "attr 0x%x\n", dip, ra, attr);
+
+	if ((ret = hvio_iommu_getbypass(DIP_TO_HANDLE(dip), ra,
+	    attr, io_addr_p)) != H_EOK) {
+		DBG(DBG_LIB_DMA, dip,
+		    "hvio_iommu_getbypass failed, ret 0x%lx\n", ret);
+		return (ret == H_ENOTSUPPORTED ? DDI_ENOTSUP : DDI_FAILURE);
+	}
+
+	DBG(DBG_LIB_DMA, dip, "px_lib_iommu_getbypass: io_addr 0x%llx\n",
+	    *io_addr_p);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_dma_sync(dev_info_t *dip, dev_info_t *rdip, ddi_dma_handle_t handle,
+	off_t off, size_t len, uint_t cache_flags)
+{
+	ddi_dma_impl_t *mp = (ddi_dma_impl_t *)handle;
+	uint64_t sync_dir;
+	px_dvma_addr_t dvma_addr, pg_off;
+	size_t num_sync;
+	uint64_t status = H_EOK;
+
+	DBG(DBG_LIB_DMA, dip, "px_lib_dma_sync: dip 0x%p rdip 0x%p "
+	    "handle 0x%llx off 0x%x len 0x%x flags 0x%x\n",
+	    dip, rdip, handle, off, len, cache_flags);
+
+	if (!(mp->dmai_flags & PX_DMAI_FLAGS_INUSE)) {
+		cmn_err(CE_WARN, "%s%d: Unbound dma handle %p.",
+		    ddi_driver_name(rdip), ddi_get_instance(rdip), (void *)mp);
+		return (DDI_FAILURE);
+	}
+
+	if (mp->dmai_flags & PX_DMAI_FLAGS_NOSYNC)
+		return (DDI_SUCCESS);
+
+	if (!len)
+		len = mp->dmai_size;
+
+	pg_off = mp->dmai_offset;			/* start min */
+	dvma_addr = MAX(off, pg_off);			/* lo */
+	pg_off += mp->dmai_size;			/* end max */
+	pg_off = MIN(off + len, pg_off);		/* hi */
+	if (dvma_addr >= pg_off) {			/* lo >= hi ? */
+		cmn_err(CE_WARN, "%s%d: %lx + %lx out of window [%lx,%lx]",
+		    ddi_driver_name(rdip), ddi_get_instance(rdip),
+		    off, len, mp->dmai_offset,
+		    mp->dmai_offset + mp->dmai_size);
+		return (DDI_FAILURE);
+	}
+
+	len = pg_off - dvma_addr;			/* sz = hi - lo */
+	dvma_addr += mp->dmai_mapping;			/* start addr */
+
+	if (mp->dmai_rflags & DDI_DMA_READ)
+		sync_dir = HVIO_DMA_SYNC_DIR_FROM_DEV;
+	else
+		sync_dir = HVIO_DMA_SYNC_DIR_TO_DEV;
+
+	for (; ((len > 0) && (status == H_EOK)); len -= num_sync) {
+		status = hvio_dma_sync(DIP_TO_HANDLE(dip), dvma_addr, len,
+		    sync_dir, &num_sync);
+		dvma_addr += num_sync;
+	}
+
+	return ((status == H_EOK) ? DDI_SUCCESS : DDI_FAILURE);
+}
+
+
+/*
+ * MSIQ Functions:
+ */
+
+/*ARGSUSED*/
+int
+px_lib_msiq_init(dev_info_t *dip)
+{
+	px_t		*px_p = DIP_TO_STATE(dip);
+	px_msiq_state_t	*msiq_state_p = &px_p->px_ib_p->ib_msiq_state;
+	uint64_t	*msiq_addr, ra;
+	size_t		msiq_size;
+	uint_t		rec_cnt;
+	int		i, err = DDI_SUCCESS;
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSIQ, dip, "px_lib_msiq_init: dip 0x%p\n", dip);
+
+	msiq_addr = (uint64_t *)(((uint64_t)msiq_state_p->msiq_buf_p +
+	    (MMU_PAGE_SIZE - 1)) >> MMU_PAGE_SHIFT << MMU_PAGE_SHIFT);
+
+	msiq_size = msiq_state_p->msiq_rec_cnt * sizeof (msiq_rec_t);
+
+	for (i = 0; i < msiq_state_p->msiq_cnt; i++) {
+		ra = (r_addr_t)va_to_pa((caddr_t)msiq_addr + (i * msiq_size));
+
+		if ((ret = hvio_msiq_conf(DIP_TO_HANDLE(dip),
+		    (i + msiq_state_p->msiq_1st_msiq_id),
+		    ra, msiq_state_p->msiq_rec_cnt)) != H_EOK) {
+			DBG(DBG_LIB_MSIQ, dip,
+			    "hvio_msiq_conf failed, ret 0x%lx\n", ret);
+			err = DDI_FAILURE;
+			break;
+		}
+
+		if ((err = px_lib_msiq_info(dip,
+		    (i + msiq_state_p->msiq_1st_msiq_id),
+		    &ra, &rec_cnt)) != DDI_SUCCESS) {
+			DBG(DBG_LIB_MSIQ, dip,
+			    "px_lib_msiq_info failed, ret 0x%x\n", err);
+			err = DDI_FAILURE;
+			break;
+		}
+
+		DBG(DBG_LIB_MSIQ, dip,
+		    "px_lib_msiq_init: ra 0x%p rec_cnt 0x%x\n", ra, rec_cnt);
+	}
+
+	return (err);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msiq_fini(dev_info_t *dip)
+{
+	DBG(DBG_LIB_MSIQ, dip, "px_lib_msiq_fini: dip 0x%p\n", dip);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msiq_info(dev_info_t *dip, msiqid_t msiq_id, r_addr_t *ra_p,
+    uint_t *msiq_rec_cnt_p)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSIQ, dip, "px_msiq_info: dip 0x%p msiq_id 0x%x\n",
+	    dip, msiq_id);
+
+	if ((ret = hvio_msiq_info(DIP_TO_HANDLE(dip),
+	    msiq_id, ra_p, msiq_rec_cnt_p)) != H_EOK) {
+		DBG(DBG_LIB_MSIQ, dip,
+		    "hvio_msiq_info failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	DBG(DBG_LIB_MSIQ, dip, "px_msiq_info: ra_p 0x%p msiq_rec_cnt 0x%x\n",
+	    ra_p, *msiq_rec_cnt_p);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msiq_getvalid(dev_info_t *dip, msiqid_t msiq_id,
+    pci_msiq_valid_state_t *msiq_valid_state)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSIQ, dip, "px_lib_msiq_getvalid: dip 0x%p msiq_id 0x%x\n",
+	    dip, msiq_id);
+
+	if ((ret = hvio_msiq_getvalid(DIP_TO_HANDLE(dip),
+	    msiq_id, msiq_valid_state)) != H_EOK) {
+		DBG(DBG_LIB_MSIQ, dip,
+		    "hvio_msiq_getvalid failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	DBG(DBG_LIB_MSIQ, dip, "px_lib_msiq_getvalid: msiq_valid_state 0x%x\n",
+	    *msiq_valid_state);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msiq_setvalid(dev_info_t *dip, msiqid_t msiq_id,
+    pci_msiq_valid_state_t msiq_valid_state)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSIQ, dip, "px_lib_msiq_setvalid: dip 0x%p msiq_id 0x%x "
+	    "msiq_valid_state 0x%x\n", dip, msiq_id, msiq_valid_state);
+
+	if ((ret = hvio_msiq_setvalid(DIP_TO_HANDLE(dip),
+	    msiq_id, msiq_valid_state)) != H_EOK) {
+		DBG(DBG_LIB_MSIQ, dip,
+		    "hvio_msiq_setvalid failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msiq_getstate(dev_info_t *dip, msiqid_t msiq_id,
+    pci_msiq_state_t *msiq_state)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSIQ, dip, "px_lib_msiq_getstate: dip 0x%p msiq_id 0x%x\n",
+	    dip, msiq_id);
+
+	if ((ret = hvio_msiq_getstate(DIP_TO_HANDLE(dip),
+	    msiq_id, msiq_state)) != H_EOK) {
+		DBG(DBG_LIB_MSIQ, dip,
+		    "hvio_msiq_getstate failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	DBG(DBG_LIB_MSIQ, dip, "px_lib_msiq_getstate: msiq_state 0x%x\n",
+	    *msiq_state);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msiq_setstate(dev_info_t *dip, msiqid_t msiq_id,
+    pci_msiq_state_t msiq_state)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSIQ, dip, "px_lib_msiq_setstate: dip 0x%p msiq_id 0x%x "
+	    "msiq_state 0x%x\n", dip, msiq_id, msiq_state);
+
+	if ((ret = hvio_msiq_setstate(DIP_TO_HANDLE(dip),
+	    msiq_id, msiq_state)) != H_EOK) {
+		DBG(DBG_LIB_MSIQ, dip,
+		    "hvio_msiq_setstate failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msiq_gethead(dev_info_t *dip, msiqid_t msiq_id,
+    msiqhead_t *msiq_head_p)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSIQ, dip, "px_lib_msiq_gethead: dip 0x%p msiq_id 0x%x\n",
+	    dip, msiq_id);
+
+	if ((ret = hvio_msiq_gethead(DIP_TO_HANDLE(dip),
+	    msiq_id, msiq_head_p)) != H_EOK) {
+		DBG(DBG_LIB_MSIQ, dip,
+		    "hvio_msiq_gethead failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	*msiq_head_p =  (*msiq_head_p / sizeof (msiq_rec_t));
+
+	DBG(DBG_LIB_MSIQ, dip, "px_msiq_gethead: msiq_head 0x%x\n",
+	    *msiq_head_p);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msiq_sethead(dev_info_t *dip, msiqid_t msiq_id,
+    msiqhead_t msiq_head)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSIQ, dip, "px_lib_msiq_sethead: dip 0x%p msiq_id 0x%x "
+	    "msiq_head 0x%x\n", dip, msiq_id, msiq_head);
+
+	if ((ret = hvio_msiq_sethead(DIP_TO_HANDLE(dip),
+	    msiq_id, msiq_head * sizeof (msiq_rec_t))) != H_EOK) {
+		DBG(DBG_LIB_MSIQ, dip,
+		    "hvio_msiq_sethead failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msiq_gettail(dev_info_t *dip, msiqid_t msiq_id,
+    msiqtail_t *msiq_tail_p)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSIQ, dip, "px_lib_msiq_gettail: dip 0x%p msiq_id 0x%x\n",
+	    dip, msiq_id);
+
+	if ((ret = hvio_msiq_gettail(DIP_TO_HANDLE(dip),
+	    msiq_id, msiq_tail_p)) != H_EOK) {
+		DBG(DBG_LIB_MSIQ, dip,
+		    "hvio_msiq_gettail failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	*msiq_tail_p =  (*msiq_tail_p / sizeof (msiq_rec_t));
+	DBG(DBG_LIB_MSIQ, dip, "px_lib_msiq_gettail: msiq_tail 0x%x\n",
+	    *msiq_tail_p);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+void
+px_lib_get_msiq_rec(dev_info_t *dip, msiqhead_t *msiq_head_p,
+    msiq_rec_t *msiq_rec_p)
+{
+	msiq_rec_t	*curr_msiq_rec_p = (msiq_rec_t *)msiq_head_p;
+
+	DBG(DBG_LIB_MSIQ, dip, "px_lib_get_msiq_rec: dip 0x%p\n", dip);
+
+	if (!curr_msiq_rec_p->msiq_rec_type)
+		return;
+
+	*msiq_rec_p = *curr_msiq_rec_p;
+
+	/* Zero out msiq_rec_type field */
+	curr_msiq_rec_p->msiq_rec_type  = 0;
+}
+
+/*
+ * MSI Functions:
+ */
+
+/*ARGSUSED*/
+int
+px_lib_msi_init(dev_info_t *dip)
+{
+	DBG(DBG_LIB_MSI, dip, "px_lib_msi_init: dip 0x%p\n", dip);
+
+	/* Noop */
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msi_getmsiq(dev_info_t *dip, msinum_t msi_num,
+    msiqid_t *msiq_id)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSI, dip, "px_lib_msi_getmsiq: dip 0x%p msi_num 0x%x\n",
+	    dip, msi_num);
+
+	if ((ret = hvio_msi_getmsiq(DIP_TO_HANDLE(dip),
+	    msi_num, msiq_id)) != H_EOK) {
+		DBG(DBG_LIB_MSI, dip,
+		    "hvio_msi_getmsiq failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	DBG(DBG_LIB_MSI, dip, "px_lib_msi_getmsiq: msiq_id 0x%x\n",
+	    *msiq_id);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msi_setmsiq(dev_info_t *dip, msinum_t msi_num,
+    msiqid_t msiq_id, msi_type_t msitype)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSI, dip, "px_lib_msi_setmsiq: dip 0x%p msi_num 0x%x "
+	    "msq_id 0x%x\n", dip, msi_num, msiq_id);
+
+	if ((ret = hvio_msi_setmsiq(DIP_TO_HANDLE(dip),
+	    msi_num, msiq_id, msitype)) != H_EOK) {
+		DBG(DBG_LIB_MSI, dip,
+		    "hvio_msi_setmsiq failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msi_getvalid(dev_info_t *dip, msinum_t msi_num,
+    pci_msi_valid_state_t *msi_valid_state)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSI, dip, "px_lib_msi_getvalid: dip 0x%p msi_num 0x%x\n",
+	    dip, msi_num);
+
+	if ((ret = hvio_msi_getvalid(DIP_TO_HANDLE(dip),
+	    msi_num, msi_valid_state)) != H_EOK) {
+		DBG(DBG_LIB_MSI, dip,
+		    "hvio_msi_getvalid failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	DBG(DBG_LIB_MSI, dip, "px_lib_msi_getvalid: msiq_id 0x%x\n",
+	    *msi_valid_state);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msi_setvalid(dev_info_t *dip, msinum_t msi_num,
+    pci_msi_valid_state_t msi_valid_state)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSI, dip, "px_lib_msi_setvalid: dip 0x%p msi_num 0x%x "
+	    "msi_valid_state 0x%x\n", dip, msi_num, msi_valid_state);
+
+	if ((ret = hvio_msi_setvalid(DIP_TO_HANDLE(dip),
+	    msi_num, msi_valid_state)) != H_EOK) {
+		DBG(DBG_LIB_MSI, dip,
+		    "hvio_msi_setvalid failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msi_getstate(dev_info_t *dip, msinum_t msi_num,
+    pci_msi_state_t *msi_state)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSI, dip, "px_lib_msi_getstate: dip 0x%p msi_num 0x%x\n",
+	    dip, msi_num);
+
+	if ((ret = hvio_msi_getstate(DIP_TO_HANDLE(dip),
+	    msi_num, msi_state)) != H_EOK) {
+		DBG(DBG_LIB_MSI, dip,
+		    "hvio_msi_getstate failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	DBG(DBG_LIB_MSI, dip, "px_lib_msi_getstate: msi_state 0x%x\n",
+	    *msi_state);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msi_setstate(dev_info_t *dip, msinum_t msi_num,
+    pci_msi_state_t msi_state)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSI, dip, "px_lib_msi_setstate: dip 0x%p msi_num 0x%x "
+	    "msi_state 0x%x\n", dip, msi_num, msi_state);
+
+	if ((ret = hvio_msi_setstate(DIP_TO_HANDLE(dip),
+	    msi_num, msi_state)) != H_EOK) {
+		DBG(DBG_LIB_MSI, dip,
+		    "hvio_msi_setstate failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	return (DDI_SUCCESS);
+}
+
+/*
+ * MSG Functions:
+ */
+
+/*ARGSUSED*/
+int
+px_lib_msg_getmsiq(dev_info_t *dip, pcie_msg_type_t msg_type,
+    msiqid_t *msiq_id)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSG, dip, "px_lib_msg_getmsiq: dip 0x%p msg_type 0x%x\n",
+	    dip, msg_type);
+
+	if ((ret = hvio_msg_getmsiq(DIP_TO_HANDLE(dip),
+	    msg_type, msiq_id)) != H_EOK) {
+		DBG(DBG_LIB_MSG, dip,
+		    "hvio_msg_getmsiq failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	DBG(DBG_LIB_MSI, dip, "px_lib_msg_getmsiq: msiq_id 0x%x\n",
+	    *msiq_id);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msg_setmsiq(dev_info_t *dip, pcie_msg_type_t msg_type,
+    msiqid_t msiq_id)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSG, dip, "px_lib_msg_setmsiq: dip 0x%p msg_type 0x%x "
+	    "msq_id 0x%x\n", dip, msg_type, msiq_id);
+
+	if ((ret = hvio_msg_setmsiq(DIP_TO_HANDLE(dip),
+	    msg_type, msiq_id)) != H_EOK) {
+		DBG(DBG_LIB_MSG, dip,
+		    "hvio_msg_setmsiq failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msg_getvalid(dev_info_t *dip, pcie_msg_type_t msg_type,
+    pcie_msg_valid_state_t *msg_valid_state)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSG, dip, "px_lib_msg_getvalid: dip 0x%p msg_type 0x%x\n",
+	    dip, msg_type);
+
+	if ((ret = hvio_msg_getvalid(DIP_TO_HANDLE(dip), msg_type,
+	    msg_valid_state)) != H_EOK) {
+		DBG(DBG_LIB_MSG, dip,
+		    "hvio_msg_getvalid failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	DBG(DBG_LIB_MSI, dip, "px_lib_msg_getvalid: msg_valid_state 0x%x\n",
+	    *msg_valid_state);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+int
+px_lib_msg_setvalid(dev_info_t *dip, pcie_msg_type_t msg_type,
+    pcie_msg_valid_state_t msg_valid_state)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_MSG, dip, "px_lib_msg_setvalid: dip 0x%p msg_type 0x%x "
+	    "msg_valid_state 0x%x\n", dip, msg_type, msg_valid_state);
+
+	if ((ret = hvio_msg_setvalid(DIP_TO_HANDLE(dip), msg_type,
+	    msg_valid_state)) != H_EOK) {
+		DBG(DBG_LIB_MSG, dip,
+		    "hvio_msg_setvalid failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	return (DDI_SUCCESS);
+}
+
+/*
+ * Suspend/Resume Functions:
+ * Currently unsupported by hypervisor and all functions are noops.
+ */
+/*ARGSUSED*/
+int
+px_lib_suspend(dev_info_t *dip)
+{
+	DBG(DBG_ATTACH, dip, "px_lib_suspend: Not supported\n");
+
+	/* Not supported */
+	return (DDI_FAILURE);
+}
+
+/*ARGSUSED*/
+void
+px_lib_resume(dev_info_t *dip)
+{
+	DBG(DBG_ATTACH, dip, "px_lib_resume: Not supported\n");
+
+	/* Noop */
+}
+
+/*
+ * Misc Functions:
+ * Currently unsupported by hypervisor and all functions are noops.
+ */
+/*ARGSUSED*/
+static int
+px_lib_config_get(dev_info_t *dip, pci_device_t bdf, pci_config_offset_t off,
+    uint8_t size, pci_cfg_data_t *data_p)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_CFG, dip, "px_lib_config_get: dip 0x%p, bdf 0x%llx "
+	    "off 0x%x size 0x%x\n", dip, bdf, off, size);
+
+	if ((ret = hvio_config_get(DIP_TO_HANDLE(dip), bdf, off,
+	    size, data_p)) != H_EOK) {
+		DBG(DBG_LIB_CFG, dip,
+		    "hvio_config_get failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+	DBG(DBG_LIB_CFG, dip, "px_config_get: data 0x%x\n", data_p->dw);
+
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+static int
+px_lib_config_put(dev_info_t *dip, pci_device_t bdf, pci_config_offset_t off,
+    uint8_t size, pci_cfg_data_t data)
+{
+	uint64_t	ret;
+
+	DBG(DBG_LIB_CFG, dip, "px_lib_config_put: dip 0x%p, bdf 0x%llx "
+	    "off 0x%x size 0x%x data 0x%llx\n", dip, bdf, off, size, data.qw);
+
+	if ((ret = hvio_config_put(DIP_TO_HANDLE(dip), bdf, off,
+	    size, data)) != H_EOK) {
+		DBG(DBG_LIB_CFG, dip,
+		    "hvio_config_put failed, ret 0x%lx\n", ret);
+		return (DDI_FAILURE);
+	}
+
+	return (DDI_SUCCESS);
+}
+
+static uint32_t
+px_pci_config_get(ddi_acc_impl_t *handle, uint32_t *addr, int size)
+{
+	px_config_acc_pvt_t	*px_pvt = (px_config_acc_pvt_t *)
+					handle->ahi_common.ah_bus_private;
+	uint32_t pci_dev_addr = px_pvt->raddr;
+	uint32_t vaddr = px_pvt->vaddr;
+	uint16_t off = (uint16_t)(uintptr_t)(addr - vaddr) & 0xfff;
+	uint32_t rdata = 0;
+
+	if (px_lib_config_get(px_pvt->dip, pci_dev_addr, off,
+				size, (pci_cfg_data_t *)&rdata) != DDI_SUCCESS)
+		/* XXX update error kstats */
+		return (0xffffffff);
+	return (rdata);
+}
+
+static void
+px_pci_config_put(ddi_acc_impl_t *handle, uint32_t *addr,
+		int size, pci_cfg_data_t wdata)
+{
+	px_config_acc_pvt_t	*px_pvt = (px_config_acc_pvt_t *)
+					handle->ahi_common.ah_bus_private;
+	uint32_t pci_dev_addr = px_pvt->raddr;
+	uint32_t vaddr = px_pvt->vaddr;
+	uint16_t off = (uint16_t)(uintptr_t)(addr - vaddr) & 0xfff;
+
+	if (px_lib_config_put(px_pvt->dip, pci_dev_addr, off,
+				size, wdata) != DDI_SUCCESS) {
+		/*EMPTY*/
+		/* XXX update error kstats */
+	}
+}
+
+static uint8_t
+px_pci_config_get8(ddi_acc_impl_t *handle, uint8_t *addr)
+{
+	return ((uint8_t)px_pci_config_get(handle, (uint32_t *)addr, 1));
+}
+
+static uint16_t
+px_pci_config_get16(ddi_acc_impl_t *handle, uint16_t *addr)
+{
+	return ((uint16_t)px_pci_config_get(handle, (uint32_t *)addr, 2));
+}
+
+static uint32_t
+px_pci_config_get32(ddi_acc_impl_t *handle, uint32_t *addr)
+{
+	return ((uint32_t)px_pci_config_get(handle, (uint32_t *)addr, 4));
+}
+
+static uint64_t
+px_pci_config_get64(ddi_acc_impl_t *handle, uint64_t *addr)
+{
+	uint32_t rdatah, rdatal;
+
+	rdatal = (uint32_t)px_pci_config_get(handle, (uint32_t *)addr, 4);
+	rdatah = (uint32_t)px_pci_config_get(handle,
+				(uint32_t *)((char *)addr+4), 4);
+	return (((uint64_t)rdatah << 32) | rdatal);
+}
+
+static void
+px_pci_config_put8(ddi_acc_impl_t *handle, uint8_t *addr, uint8_t data)
+{
+	pci_cfg_data_t wdata = { 0 };
+
+	wdata.qw = (uint8_t)data;
+	px_pci_config_put(handle, (uint32_t *)addr, 1, wdata);
+}
+
+static void
+px_pci_config_put16(ddi_acc_impl_t *handle, uint16_t *addr, uint16_t data)
+{
+	pci_cfg_data_t wdata = { 0 };
+
+	wdata.qw = (uint16_t)data;
+	px_pci_config_put(handle, (uint32_t *)addr, 2, wdata);
+}
+
+static void
+px_pci_config_put32(ddi_acc_impl_t *handle, uint32_t *addr, uint32_t data)
+{
+	pci_cfg_data_t wdata = { 0 };
+
+	wdata.qw = (uint32_t)data;
+	px_pci_config_put(handle, (uint32_t *)addr, 4, wdata);
+}
+
+static void
+px_pci_config_put64(ddi_acc_impl_t *handle, uint64_t *addr, uint64_t data)
+{
+	pci_cfg_data_t wdata = { 0 };
+
+	wdata.qw = (uint32_t)(data & 0xffffffff);
+	px_pci_config_put(handle, (uint32_t *)addr, 4, wdata);
+	wdata.qw = (uint32_t)((data >> 32) & 0xffffffff);
+	px_pci_config_put(handle, (uint32_t *)((char *)addr+4), 4, wdata);
+}
+
+static void
+px_pci_config_rep_get8(ddi_acc_impl_t *handle, uint8_t *host_addr,
+			uint8_t *dev_addr, size_t repcount, uint_t flags)
+{
+	if (flags == DDI_DEV_AUTOINCR)
+		for (; repcount; repcount--)
+			*host_addr++ = px_pci_config_get8(handle, dev_addr++);
+	else
+		for (; repcount; repcount--)
+			*host_addr++ = px_pci_config_get8(handle, dev_addr);
+}
+
+/*
+ * Function to rep read 16 bit data off the PCI configuration space behind
+ * the 21554's host interface.
+ */
+static void
+px_pci_config_rep_get16(ddi_acc_impl_t *handle, uint16_t *host_addr,
+			uint16_t *dev_addr, size_t repcount, uint_t flags)
+{
+	if (flags == DDI_DEV_AUTOINCR)
+		for (; repcount; repcount--)
+			*host_addr++ = px_pci_config_get16(handle, dev_addr++);
+	else
+		for (; repcount; repcount--)
+			*host_addr++ = px_pci_config_get16(handle, dev_addr);
+}
+
+/*
+ * Function to rep read 32 bit data off the PCI configuration space behind
+ * the 21554's host interface.
+ */
+static void
+px_pci_config_rep_get32(ddi_acc_impl_t *handle, uint32_t *host_addr,
+			uint32_t *dev_addr, size_t repcount, uint_t flags)
+{
+	if (flags == DDI_DEV_AUTOINCR)
+		for (; repcount; repcount--)
+			*host_addr++ = px_pci_config_get32(handle, dev_addr++);
+	else
+		for (; repcount; repcount--)
+			*host_addr++ = px_pci_config_get32(handle, dev_addr);
+}
+
+/*
+ * Function to rep read 64 bit data off the PCI configuration space behind
+ * the 21554's host interface.
+ */
+static void
+px_pci_config_rep_get64(ddi_acc_impl_t *handle, uint64_t *host_addr,
+			uint64_t *dev_addr, size_t repcount, uint_t flags)
+{
+	if (flags == DDI_DEV_AUTOINCR)
+		for (; repcount; repcount--)
+			*host_addr++ = px_pci_config_get64(handle, dev_addr++);
+	else
+		for (; repcount; repcount--)
+			*host_addr++ = px_pci_config_get64(handle, dev_addr);
+}
+
+/*
+ * Function to rep write 8 bit data into the PCI configuration space behind
+ * the 21554's host interface.
+ */
+static void
+px_pci_config_rep_put8(ddi_acc_impl_t *handle, uint8_t *host_addr,
+			uint8_t *dev_addr, size_t repcount, uint_t flags)
+{
+	if (flags == DDI_DEV_AUTOINCR)
+		for (; repcount; repcount--)
+			px_pci_config_put8(handle, dev_addr++, *host_addr++);
+	else
+		for (; repcount; repcount--)
+			px_pci_config_put8(handle, dev_addr, *host_addr++);
+}
+
+/*
+ * Function to rep write 16 bit data into the PCI configuration space behind
+ * the 21554's host interface.
+ */
+static void
+px_pci_config_rep_put16(ddi_acc_impl_t *handle, uint16_t *host_addr,
+			uint16_t *dev_addr, size_t repcount, uint_t flags)
+{
+	if (flags == DDI_DEV_AUTOINCR)
+		for (; repcount; repcount--)
+			px_pci_config_put16(handle, dev_addr++, *host_addr++);
+	else
+		for (; repcount; repcount--)
+			px_pci_config_put16(handle, dev_addr, *host_addr++);
+}
+
+/*
+ * Function to rep write 32 bit data into the PCI configuration space behind
+ * the 21554's host interface.
+ */
+static void
+px_pci_config_rep_put32(ddi_acc_impl_t *handle, uint32_t *host_addr,
+			uint32_t *dev_addr, size_t repcount, uint_t flags)
+{
+	if (flags == DDI_DEV_AUTOINCR)
+		for (; repcount; repcount--)
+			px_pci_config_put32(handle, dev_addr++, *host_addr++);
+	else
+		for (; repcount; repcount--)
+			px_pci_config_put32(handle, dev_addr, *host_addr++);
+}
+
+/*
+ * Function to rep write 64 bit data into the PCI configuration space behind
+ * the 21554's host interface.
+ */
+static void
+px_pci_config_rep_put64(ddi_acc_impl_t *handle, uint64_t *host_addr,
+			uint64_t *dev_addr, size_t repcount, uint_t flags)
+{
+	if (flags == DDI_DEV_AUTOINCR)
+		for (; repcount; repcount--)
+			px_pci_config_put64(handle, dev_addr++, *host_addr++);
+	else
+		for (; repcount; repcount--)
+			px_pci_config_put64(handle, dev_addr, *host_addr++);
+}
+
+/*
+ * Provide a private access handle to route config access calls to Hypervisor.
+ * Beware: Do all error checking for config space accesses before calling
+ * this function. ie. do error checking from the calling function.
+ * Due to a lack of meaningful error code in DDI, the gauranteed return of
+ * DDI_SUCCESS from here makes the code organization readable/easier from
+ * the generic code.
+ */
+/*ARGSUSED*/
+int
+px_lib_map_vconfig(dev_info_t *dip,
+	ddi_map_req_t *mp, pci_config_offset_t off,
+	pci_regspec_t *rp, caddr_t *addrp)
+{
+	ddi_acc_hdl_t *hp;
+	ddi_acc_impl_t *ap;
+	uchar_t busnum;	/* bus number */
+	uchar_t devnum;	/* device number */
+	uchar_t funcnum; /* function number */
+	px_config_acc_pvt_t *px_pvt;
+
+	hp = (ddi_acc_hdl_t *)mp->map_handlep;
+	ap = (ddi_acc_impl_t *)hp->ah_platform_private;
+
+	/* Check for mapping teardown operation */
+	if ((mp->map_op == DDI_MO_UNMAP) ||
+			(mp->map_op == DDI_MO_UNLOCK)) {
+		/* free up memory allocated for the private access handle. */
+		px_pvt = (px_config_acc_pvt_t *)hp->ah_bus_private;
+		kmem_free((void *)px_pvt, sizeof (px_config_acc_pvt_t));
+
+		/* unmap operation of PCI IO/config space. */
+		return (DDI_SUCCESS);
+	}
+
+	ap->ahi_get8 = px_pci_config_get8;
+	ap->ahi_get16 = px_pci_config_get16;
+	ap->ahi_get32 = px_pci_config_get32;
+	ap->ahi_get64 = px_pci_config_get64;
+	ap->ahi_put8 = px_pci_config_put8;
+	ap->ahi_put16 = px_pci_config_put16;
+	ap->ahi_put32 = px_pci_config_put32;
+	ap->ahi_put64 = px_pci_config_put64;
+	ap->ahi_rep_get8 = px_pci_config_rep_get8;
+	ap->ahi_rep_get16 = px_pci_config_rep_get16;
+	ap->ahi_rep_get32 = px_pci_config_rep_get32;
+	ap->ahi_rep_get64 = px_pci_config_rep_get64;
+	ap->ahi_rep_put8 = px_pci_config_rep_put8;
+	ap->ahi_rep_put16 = px_pci_config_rep_put16;
+	ap->ahi_rep_put32 = px_pci_config_rep_put32;
+	ap->ahi_rep_put64 = px_pci_config_rep_put64;
+
+	/* Initialize to default check/notify functions */
+	ap->ahi_fault = 0;
+	ap->ahi_fault_check = i_ddi_acc_fault_check;
+	ap->ahi_fault_notify = i_ddi_acc_fault_notify;
+
+	/* allocate memory for our private handle */
+	px_pvt = (px_config_acc_pvt_t *)
+			kmem_zalloc(sizeof (px_config_acc_pvt_t), KM_SLEEP);
+	hp->ah_bus_private = (void *)px_pvt;
+
+	busnum = PCI_REG_BUS_G(rp->pci_phys_hi);
+	devnum = PCI_REG_DEV_G(rp->pci_phys_hi);
+	funcnum = PCI_REG_FUNC_G(rp->pci_phys_hi);
+
+	/* set up private data for use during IO routines */
+
+	/* addr needed by the HV APIs */
+	px_pvt->raddr = busnum << 16 | devnum << 11 | funcnum << 8;
+	/*
+	 * Address that specifies the actual offset into the 256MB
+	 * memory mapped configuration space, 4K per device.
+	 * First 12bits form the offset into 4K config space.
+	 * This address is only used during the IO routines to calculate
+	 * the offset at which the transaction must be performed.
+	 * Drivers bypassing DDI functions to access PCI config space will
+	 * panic the system since the following is a bogus virtual address.
+	 */
+	px_pvt->vaddr = busnum << 20 | devnum << 15 | funcnum << 12 | off;
+	px_pvt->dip = dip;
+
+	DBG(DBG_LIB_CFG, dip, "px_config_setup: raddr 0x%x, vaddr 0x%x\n",
+				px_pvt->raddr, px_pvt->vaddr);
+	*addrp = (caddr_t)(uintptr_t)px_pvt->vaddr;
+	return (DDI_SUCCESS);
+}
+
+/*ARGSUSED*/
+void
+px_lib_map_attr_check(ddi_map_req_t *mp)
+{
+}
+
+/*
+ * px_lib_log_safeacc_err:
+ * Imitate a cpu/mem trap call when a peek/poke fails.
+ * This will initiate something similar to px_fm_callback.
+ */
+static void
+px_lib_log_safeacc_err(px_t *px_p, ddi_acc_handle_t handle, int fme_flag)
+{
+	ddi_acc_impl_t *hp = (ddi_acc_impl_t *)handle;
+	ddi_fm_error_t derr;
+
+	derr.fme_status = DDI_FM_NONFATAL;
+	derr.fme_version = DDI_FME_VERSION;
+	derr.fme_flag = fme_flag;
+	derr.fme_ena = fm_ena_generate(0, FM_ENA_FMT1);
+	derr.fme_acc_handle = handle;
+	if (hp)
+		hp->ahi_err->err_expected = DDI_FM_ERR_EXPECTED;
+
+	mutex_enter(&px_p->px_fm_mutex);
+
+	(void) ndi_fm_handler_dispatch(px_p->px_dip, NULL, &derr);
+
+	mutex_exit(&px_p->px_fm_mutex);
+}
+
+
+#ifdef  DEBUG
+int	px_peekfault_cnt = 0;
+int	px_pokefault_cnt = 0;
+#endif  /* DEBUG */
+
+static int
+px_lib_bdf_from_dip(dev_info_t *rdip, uint32_t *bdf)
+{
+	/* Start with an array of 8 reg spaces for now to cover most devices. */
+	pci_regspec_t regspec_array[8];
+	pci_regspec_t *regspec = regspec_array;
+	int buflen = sizeof (regspec_array);
+	boolean_t kmalloced = B_FALSE;
+	int status;
+
+	status = ddi_getlongprop_buf(DDI_DEV_T_ANY, rdip,
+	    DDI_PROP_DONTPASS, "reg", (caddr_t)regspec, &buflen);
+
+	/* If need more space, fallback to kmem_alloc. */
+	if (status == DDI_PROP_BUF_TOO_SMALL) {
+		regspec = kmem_alloc(buflen, KM_SLEEP);
+
+		status = ddi_getlongprop_buf(DDI_DEV_T_ANY, rdip,
+		    DDI_PROP_DONTPASS, "reg", (caddr_t)regspec, &buflen);
+
+		kmalloced = B_TRUE;
+	}
+
+	/* Get phys_hi from first element.  All have same bdf. */
+	if (status == DDI_PROP_SUCCESS)
+		*bdf = regspec->pci_phys_hi & (PCI_REG_BDFR_M ^ PCI_REG_REG_M);
+
+	if (kmalloced)
+		kmem_free(regspec, buflen);
+
+	return ((status == DDI_PROP_SUCCESS) ? DDI_SUCCESS : DDI_FAILURE);
+}
+
+/*
+ * Do a safe write to a device.
+ *
+ * When this function is given a handle (cautious access), all errors are
+ * suppressed.
+ *
+ * When this function is not given a handle (poke), only Unsupported Request
+ * and Completer Abort errors are suppressed.
+ *
+ * In all cases, all errors are returned in the function return status.
+ */
+
+int
+px_lib_ctlops_poke(dev_info_t *dip, dev_info_t *rdip,
+    peekpoke_ctlops_t *in_args)
+{
+	px_t *px_p = DIP_TO_STATE(dip);
+	px_pec_t *pec_p = px_p->px_pec_p;
+	ddi_acc_impl_t *hp = (ddi_acc_impl_t *)in_args->handle;
+
+	size_t repcount = in_args->repcount;
+	size_t size = in_args->size;
+	uintptr_t dev_addr = in_args->dev_addr;
+	uintptr_t host_addr = in_args->host_addr;
+
+	int err	= DDI_SUCCESS;
+	uint64_t hvio_poke_status;
+	uint32_t bdf;
+	uint32_t wrt_stat;
+
+	r_addr_t ra;
+	uint64_t pokeval;
+
+	/*
+	 * Used only to notify error handling peek/poke is occuring
+	 * One scenario is when a fabric err as a result of peek/poke.
+	 * However there is no way to guarantee that the fabric error
+	 * handler will occur in the window where otd is set.
+	 */
+	on_trap_data_t otd;
+
+	if (px_lib_bdf_from_dip(rdip, &bdf) != DDI_SUCCESS) {
+		DBG(DBG_LIB_DMA, px_p->px_dip,
+		    "poke: px_lib_bdf_from_dip failed\n");
+		err = DDI_FAILURE;
+		goto done;
+	}
+
+	ra = (r_addr_t)va_to_pa((void *)dev_addr);
+	for (; repcount; repcount--) {
+
+		switch (size) {
+		case sizeof (uint8_t):
+			pokeval = *(uint8_t *)host_addr;
+			break;
+		case sizeof (uint16_t):
+			pokeval = *(uint16_t *)host_addr;
+			break;
+		case sizeof (uint32_t):
+			pokeval = *(uint32_t *)host_addr;
+			break;
+		case sizeof (uint64_t):
+			pokeval = *(uint64_t *)host_addr;
+			break;
+		default:
+			DBG(DBG_MAP, px_p->px_dip,
+			    "poke: invalid size %d passed\n", size);
+			err = DDI_FAILURE;
+			goto done;
+		}
+
+		/*
+		 * Grab pokefault mutex since hypervisor does not guarantee
+		 * poke serialization.
+		 */
+		if (hp) {
+			i_ndi_busop_access_enter(hp->ahi_common.ah_dip,
+			    (ddi_acc_handle_t)hp);
+			pec_p->pec_safeacc_type = DDI_FM_ERR_EXPECTED;
+		} else {
+			mutex_enter(&pec_p->pec_pokefault_mutex);
+			pec_p->pec_safeacc_type = DDI_FM_ERR_POKE;
+		}
+		pec_p->pec_ontrap_data = &otd;
+
+		hvio_poke_status = hvio_poke(px_p->px_dev_hdl, ra, size,
+			    pokeval, bdf, &wrt_stat);
+
+		if (otd.ot_trap & OT_DATA_ACCESS)
+			err = DDI_FAILURE;
+
+		if ((hvio_poke_status != H_EOK) || (wrt_stat != H_EOK)) {
+			err = DDI_FAILURE;
+#ifdef  DEBUG
+			px_pokefault_cnt++;
+#endif
+			/*
+			 * For CAUTIOUS and POKE access, notify FMA to
+			 * cleanup.  Imitate a cpu/mem trap call like in sun4u.
+			 */
+			px_lib_log_safeacc_err(px_p, (ddi_acc_handle_t)hp,
+			    (hp ? DDI_FM_ERR_EXPECTED :
+			    DDI_FM_ERR_POKE));
+
+			pec_p->pec_ontrap_data = NULL;
+			pec_p->pec_safeacc_type = DDI_FM_ERR_UNEXPECTED;
+			if (hp) {
+				i_ndi_busop_access_exit(hp->ahi_common.ah_dip,
+				    (ddi_acc_handle_t)hp);
+			} else {
+				mutex_exit(&pec_p->pec_pokefault_mutex);
+			}
+			goto done;
+		}
+
+		pec_p->pec_ontrap_data = NULL;
+		pec_p->pec_safeacc_type = DDI_FM_ERR_UNEXPECTED;
+		if (hp) {
+			i_ndi_busop_access_exit(hp->ahi_common.ah_dip,
+			    (ddi_acc_handle_t)hp);
+		} else {
+			mutex_exit(&pec_p->pec_pokefault_mutex);
+		}
+
+		host_addr += size;
+
+		if (in_args->flags == DDI_DEV_AUTOINCR) {
+			dev_addr += size;
+			ra = (r_addr_t)va_to_pa((void *)dev_addr);
+		}
+	}
+
+done:
+	return (err);
+}
+
+
+/*ARGSUSED*/
+int
+px_lib_ctlops_peek(dev_info_t *dip, dev_info_t *rdip,
+    peekpoke_ctlops_t *in_args, void *result)
+{
+	px_t *px_p = DIP_TO_STATE(dip);
+	px_pec_t *pec_p = px_p->px_pec_p;
+	ddi_acc_impl_t *hp = (ddi_acc_impl_t *)in_args->handle;
+
+	size_t repcount = in_args->repcount;
+	uintptr_t dev_addr = in_args->dev_addr;
+	uintptr_t host_addr = in_args->host_addr;
+
+	r_addr_t ra;
+	uint32_t read_status;
+	uint64_t hvio_peek_status;
+	uint64_t peekval;
+	int err = DDI_SUCCESS;
+
+	/*
+	 * Used only to notify error handling peek/poke is occuring
+	 * One scenario is when a fabric err as a result of peek/poke.
+	 * However there is no way to guarantee that the fabric error
+	 * handler will occur in the window where otd is set.
+	 */
+	on_trap_data_t otd;
+
+	result = (void *)in_args->host_addr;
+
+	ra = (r_addr_t)va_to_pa((void *)dev_addr);
+	for (; repcount; repcount--) {
+
+		/* Lock pokefault mutex so read doesn't mask a poke fault. */
+		if (hp) {
+			i_ndi_busop_access_enter(hp->ahi_common.ah_dip,
+			    (ddi_acc_handle_t)hp);
+			pec_p->pec_safeacc_type = DDI_FM_ERR_EXPECTED;
+		} else {
+			mutex_enter(&pec_p->pec_pokefault_mutex);
+			pec_p->pec_safeacc_type = DDI_FM_ERR_PEEK;
+		}
+		pec_p->pec_ontrap_data = &otd;
+
+		hvio_peek_status = hvio_peek(px_p->px_dev_hdl, ra,
+		    in_args->size, &read_status, &peekval);
+
+		if ((hvio_peek_status != H_EOK) || (read_status != H_EOK)) {
+			err = DDI_FAILURE;
+
+			/*
+			 * For CAUTIOUS and PEEK access, notify FMA to
+			 * cleanup.  Imitate a cpu/mem trap call like in sun4u.
+			 */
+			px_lib_log_safeacc_err(px_p, (ddi_acc_handle_t)hp,
+			    (hp ? DDI_FM_ERR_EXPECTED :
+			    DDI_FM_ERR_PEEK));
+
+			/* Stuff FFs in host addr if peek. */
+			if (hp == NULL) {
+				int i;
+				uint8_t *ff_addr = (uint8_t *)host_addr;
+				for (i = 0; i < in_args->size; i++)
+					*ff_addr++ = 0xff;
+			}
+#ifdef  DEBUG
+			px_peekfault_cnt++;
+#endif
+			pec_p->pec_ontrap_data = NULL;
+			pec_p->pec_safeacc_type = DDI_FM_ERR_UNEXPECTED;
+			if (hp) {
+				i_ndi_busop_access_exit(hp->ahi_common.ah_dip,
+				    (ddi_acc_handle_t)hp);
+			} else {
+				mutex_exit(&pec_p->pec_pokefault_mutex);
+			}
+			goto done;
+
+		}
+		pec_p->pec_ontrap_data = NULL;
+		pec_p->pec_safeacc_type = DDI_FM_ERR_UNEXPECTED;
+		if (hp) {
+			i_ndi_busop_access_exit(hp->ahi_common.ah_dip,
+			    (ddi_acc_handle_t)hp);
+		} else {
+			mutex_exit(&pec_p->pec_pokefault_mutex);
+		}
+
+		switch (in_args->size) {
+		case sizeof (uint8_t):
+			*(uint8_t *)host_addr = (uint8_t)peekval;
+			break;
+		case sizeof (uint16_t):
+			*(uint16_t *)host_addr = (uint16_t)peekval;
+			break;
+		case sizeof (uint32_t):
+			*(uint32_t *)host_addr = (uint32_t)peekval;
+			break;
+		case sizeof (uint64_t):
+			*(uint64_t *)host_addr = (uint64_t)peekval;
+			break;
+		default:
+			DBG(DBG_MAP, px_p->px_dip,
+			    "peek: invalid size %d passed\n",
+			    in_args->size);
+			err = DDI_FAILURE;
+			goto done;
+		}
+
+		host_addr += in_args->size;
+
+		if (in_args->flags == DDI_DEV_AUTOINCR) {
+			dev_addr += in_args->size;
+			ra = (r_addr_t)va_to_pa((void *)dev_addr);
+		}
+	}
+done:
+	return (err);
+}
+
+
+/* add interrupt vector */
+int
+px_err_add_intr(px_fault_t *px_fault_p)
+{
+	int	ret;
+	px_t	*px_p = DIP_TO_STATE(px_fault_p->px_fh_dip);
+
+	DBG(DBG_LIB_INT, px_p->px_dip,
+	    "px_err_add_intr: calling add_ivintr");
+	ret = add_ivintr(px_fault_p->px_fh_sysino, PX_ERR_PIL,
+	    px_fault_p->px_err_func, (caddr_t)px_fault_p,
+	    (caddr_t)&px_fault_p->px_intr_payload[0]);
+
+	if (ret != DDI_SUCCESS) {
+		DBG(DBG_LIB_INT, px_p->px_dip,
+		"add_ivintr returns %d, faultp: %p", ret, px_fault_p);
+
+		return (ret);
+	}
+	DBG(DBG_LIB_INT, px_p->px_dip,
+	    "px_err_add_intr: ib_intr_enable ");
+
+	px_ib_intr_enable(px_p, intr_dist_cpuid(), px_fault_p->px_intr_ino);
+
+	return (ret);
+}
+
+/* remove interrupt vector */
+void
+px_err_rem_intr(px_fault_t *px_fault_p)
+{
+	px_t	*px_p = DIP_TO_STATE(px_fault_p->px_fh_dip);
+
+	px_ib_intr_disable(px_p->px_ib_p, px_fault_p->px_intr_ino,
+	    IB_INTR_WAIT);
+
+	rem_ivintr(px_fault_p->px_fh_sysino, NULL);
+}
+
+int
+px_cb_add_intr(px_fault_t *f_p)
+{
+	return (px_err_add_intr(f_p));
+}
+
+void
+px_cb_rem_intr(px_fault_t *f_p)
+{
+	px_err_rem_intr(f_p);
+}
+
+void
+px_cb_intr_redist(px_t *px_p)
+{
+	px_ib_intr_dist_en(px_p->px_dip, intr_dist_cpuid(),
+	    px_p->px_inos[PX_INTR_XBC], B_FALSE);
+}
+
+#ifdef FMA
+void
+px_fill_rc_status(px_fault_t *px_fault_p, pciex_rc_error_regs_t *rc_status)
+{
+	px_pec_err_t	*err_pkt;
+
+	err_pkt = (px_pec_err_t *)px_fault_p->px_intr_payload;
+
+	/* initialise all the structure members */
+	rc_status->status_valid = 0;
+
+	if (err_pkt->pec_descr.P) {
+		/* PCI Status Register */
+		rc_status->pci_err_status = err_pkt->pci_err_status;
+		rc_status->status_valid |= PCI_ERR_STATUS_VALID;
+	}
+
+	if (err_pkt->pec_descr.E) {
+		/* PCIe Status Register */
+		rc_status->pcie_err_status = err_pkt->pcie_err_status;
+		rc_status->status_valid |= PCIE_ERR_STATUS_VALID;
+	}
+
+	if (err_pkt->pec_descr.U) {
+		rc_status->ue_status = err_pkt->ue_reg_status;
+		rc_status->status_valid |= UE_STATUS_VALID;
+	}
+
+	if (err_pkt->pec_descr.H) {
+		rc_status->ue_hdr1 = err_pkt->hdr[0];
+		rc_status->status_valid |= UE_HDR1_VALID;
+	}
+
+	if (err_pkt->pec_descr.I) {
+		rc_status->ue_hdr2 = err_pkt->hdr[1];
+		rc_status->status_valid |= UE_HDR2_VALID;
+	}
+
+	/* ue_fst_err_ptr - not available for sun4v?? */
+
+
+	if (err_pkt->pec_descr.S) {
+		rc_status->source_id = err_pkt->err_src_reg;
+		rc_status->status_valid |= SOURCE_ID_VALID;
+	}
+
+	if (err_pkt->pec_descr.R) {
+		rc_status->root_err_status = err_pkt->root_err_status;
+		rc_status->status_valid |= CE_STATUS_VALID;
+	}
+}
+#endif
+
+/*ARGSUSED*/
+int
+px_lib_pmctl(int cmd, px_t *px_p)
+{
+	return (DDI_FAILURE);
+}
+
+/*ARGSUSED*/
+uint_t
+px_pmeq_intr(caddr_t arg)
+{
+	return (DDI_INTR_CLAIMED);
+}
+
+/*
+ * Unprotected raw reads/writes of fabric device's config space.
+ * Only used for temporary PCI-E Fabric Error Handling.
+ */
+uint32_t
+px_fab_get(px_t *px_p, pcie_req_id_t bdf, uint16_t offset) {
+	uint32_t 	data = 0;
+
+	(void) hvio_config_get(px_p->px_dev_hdl,
+	    (bdf << PX_RA_BDF_SHIFT), offset, 4,
+	    (pci_cfg_data_t *)&data);
+
+	return (data);
+}
+
+void
+px_fab_set(px_t *px_p, pcie_req_id_t bdf, uint16_t offset,
+    uint32_t val) {
+	pci_cfg_data_t	wdata = { 0 };
+
+	wdata.qw = (uint32_t)val;
+	(void) hvio_config_put(px_p->px_dev_hdl,
+	    (bdf << PX_RA_BDF_SHIFT), offset, 4, wdata);
+}
+
+/*ARGSUSED*/
+int
+px_lib_hotplug_init(dev_info_t *dip, void *arg)
+{
+	return (DDI_ENOTSUP);
+}
+
+/*ARGSUSED*/
+void
+px_lib_hotplug_uninit(dev_info_t *dip)
+{
+}
+
+/* Dummy cpr add callback */
+/*ARGSUSED*/
+void
+px_cpr_add_callb(px_t *px_p)
+{
+}
+
+/* Dummy cpr rem callback */
+/*ARGSUSED*/
+void
+px_cpr_rem_callb(px_t *px_p)
+{
+}
+
+/*ARGSUSED*/
+boolean_t
+px_lib_is_in_drain_state(px_t *px_p)
+{
+	return (B_FALSE);
+}

@@ -1,0 +1,13 @@
+/*
+ * Copyright 2002 Sun Microsystems, Inc.  All rights reserved.
+ * Use is subject to license terms.
+ */
+#pragma ident	"@(#)llib-lssl	1.5	04/06/22 SMI"
+
+/* LINTLIBRARY */
+/* PROTOLIB1 */
+
+#include <openssl/ssl.h>
+#include <openssl/ssl2.h>
+#include <openssl/ssl23.h>
+#include <openssl/ssl3.h>

@@ -1,0 +1,22 @@
+#
+#pragma ident	"@(#)Makefile.top	1.1	00/12/21 SMI"
+#
+# Copyright (c) 2000 by Sun Microsystems, Inc.
+# All rights reserved.
+
+DIRS=	pppdump plugins
+
+all:		$(DIRS)
+install:	$(DIRS)
+clean:		$(DIRS)
+clobber:	$(DIRS)
+
+all:=		TARGET=all
+install:=	TARGET=install
+clean:=		TARGET=clean
+clobber:=	TARGET=clobber
+
+$(DIRS):	FORCE
+	@cd $@ && make $(TARGET)
+
+FORCE:

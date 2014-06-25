@@ -1,0 +1,19 @@
+#!/bin/sh
+#
+# Copyright (c) 2000 by Sun Microsystems, Inc.
+# All rights reserved.
+#
+#ident	"@(#)r.preserve	1.1	00/12/21 SMI"
+#
+
+while read src
+do
+	if [ -f $src ]; then
+		if [ -s $src ]; then
+			echo "not removing $src"
+		else
+			rm -f $src
+		fi
+	fi
+done
+exit 0

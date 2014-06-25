@@ -1,0 +1,57 @@
+#
+# CDDL HEADER START
+#
+# The contents of this file are subject to the terms of the
+# Common Development and Distribution License, Version 1.0 only
+# (the "License").  You may not use this file except in compliance
+# with the License.
+#
+# You can obtain a copy of the license at usr/src/OPENSOLARIS.LICENSE
+# or http://www.opensolaris.org/os/licensing.
+# See the License for the specific language governing permissions
+# and limitations under the License.
+#
+# When distributing Covered Code, include this CDDL HEADER in each
+# file and include the License file at usr/src/OPENSOLARIS.LICENSE.
+# If applicable, add the following below this CDDL HEADER, with the
+# fields enclosed by brackets "[]" replaced with your own identifying
+# information: Portions Copyright [yyyy] [name of copyright owner]
+#
+# CDDL HEADER END
+#
+# Copyright 2005 Cyril Plisko <cyril.plisko@mountall.com>
+# All rights reserved. Use is subject to license terms.
+#
+
+OpenSolaris on PowerPC port details
+
+The name of the 32 bit processor architecture is "ppc"
+The name of the 64 bit processor architecture is "ppc64"
+
+The name of the machine type (implementation architecture)
+is "chrp" for CHRP compliant systems.
+(How many other architectures does it make sense to support ?)
+
+
+usr/src/psm/ppc  -  ???
+usr/src/uts/ppc  - architecture independent files for PowerPC processor
+usr/src/uts/ppc64 - do we need it to be a separate build directory ? I think so.
+usr/src/uts/chrp - CHRP architecture dependent files
+
+Makefile structure
+(Legend: o = ready, x = in progress, - = absent)
+
+ o usr/src/uts/Makefile
+ o   usr/src/uts/ppc/Makefile
+ o     usr/src/uts/ppc/Makefile.ppc
+ o     usr/src/uts/ppc/Makefile.rules
+ o     usr/src/uts/ppc/Makefile.targ
+ o   usr/src/uts/chrp/Makefile
+ o     usr/src/uts/chrp/Makefile.chrp
+ o       usr/src/uts/chrp/Makefile.files
+ o       usr/src/uts/ppc/Makefile.files
+ o       usr/src/uts/common/Makefile.files
+ -       usr/src/uts/chrp/Makefile.workaround
+ -     usr/src/uts/chrp/Makefile.targ
+ o       usr/src/uts/chrp/unix/Makefile - drives the creation of 'unix' for CHRP platform
+ o         usr/src/uts/ppc/genunix/Makefile - drives the creation of 'genunix' for ppc architecture
